@@ -1,6 +1,6 @@
 [package]
 name = "floresline-launcher"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Floresline GNOME fuzzy app launcher (Rust + GTK4)"
 license = "MIT"
@@ -17,3 +17,4 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 urlencoding = "2"
 toml = "0.8"
+libc = "0.2"

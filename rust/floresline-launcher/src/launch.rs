@@ -1,5 +1,6 @@
 //! Launch selected desktop applications (mirrors Python `launch`).
 
+use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -17,10 +18,19 @@ fn which(cmd: &str) -> Option<PathBuf> {
     None
 }
 
+/// Spawn a process in a new session so it survives the launcher exiting.
 fn spawn_detached(mut cmd: Command) -> Result<(), String> {
-    cmd.stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .process_group(0);
+    unsafe {
+        cmd.pre_exec(|| {
+            // New session + process group; more reliable than process_group(0)
+            // alone when the parent GTK app quits immediately after spawn.
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    cmd.stdout(Stdio::null()).stderr(Stdio::null());
     cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
@@ -71,12 +81,46 @@ pub fn launch_app(app: &AppEntry) -> Result<(), String> {
 pub fn open_uri(uri: &str) -> Result<(), String> {
     let mut c = Command::new("xdg-open");
     c.arg(uri);
-    spawn_detached(c)
+    spawn_detached(c).map_err(|e| {
+        eprintln!("open_uri({uri}): {e}");
+        e
+    })
 }
 
 /// Run a shell command detached (`sh -lc`), for optional extras.toml entries.
 pub fn run_shell(cmd: &str) -> Result<(), String> {
     let mut c = Command::new("sh");
     c.args(["-lc", cmd]);
-    spawn_detached(c)
+    spawn_detached(c).map_err(|e| {
+        eprintln!("run_shell({cmd}): {e}");
+        e
+    })
+}
+
+/// Copy text via `wl-copy` when available (Wayland clipboard often needs this).
+pub fn copy_via_wl_copy(text: &str) -> bool {
+    let Some(bin) = which("wl-copy") else {
+        return false;
+    };
+    let mut child = match Command::new(bin)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("wl-copy spawn: {e}");
+            return false;
+        }
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Err(e) = stdin.write_all(text.as_bytes()) {
+            eprintln!("wl-copy write: {e}");
+            return false;
+        }
+    }
+    // Don't wait — detachment isn't critical; brief lifetime is fine.
+    let _ = child;
+    true
 }

@@ -93,7 +93,7 @@ impl Drop for PidGuard {
 #[derive(Clone)]
 enum ResultItem {
     App(desktop::AppEntry),
-    Calc { display: String, result: String },
+    Calc { display: String, result: Option<String> },
     Web { title: String, url: String },
     Extra { label: String, exec: String },
 }
@@ -130,10 +130,20 @@ fn copy_to_clipboard(text: &str) {
     if let Some(display) = Display::default() {
         display.clipboard().set_text(text);
     }
+    // Wayland: GTK clipboard often does not stick after immediate quit.
+    let _ = launch::copy_via_wl_copy(text);
+}
+
+/// Delay quit so detached children / clipboard clients can start.
+fn quit_soon(app: &Application) {
+    let app = app.clone();
+    glib::timeout_add_local_once(Duration::from_millis(200), move || {
+        app.quit();
+    });
 }
 
 /// Pop-style web prefixes and bare URLs. Returns (title, url) if matched.
-fn parse_web_action(query: &str) -> Option<(String, String)> {
+pub(crate) fn parse_web_action(query: &str) -> Option<(String, String)> {
     let q = query.trim();
     if q.is_empty() {
         return None;
@@ -174,7 +184,9 @@ fn parse_web_action(query: &str) -> Option<(String, String)> {
     Some((format!("Search {engine}: {rest}"), url))
 }
 
-fn parse_calc(query: &str) -> Option<(String, String)> {
+/// Parse `=` calculator prefix. Returns (display, Some(result)) on success,
+/// (display, None) for invalid expressions, or None if not a calc query.
+pub(crate) fn parse_calc(query: &str) -> Option<(String, Option<String>)> {
     let q = query.trim();
     if !q.starts_with('=') {
         return None;
@@ -190,9 +202,9 @@ fn parse_calc(query: &str) -> Option<(String, String)> {
             } else {
                 format!("{v}")
             };
-            Some((format!("= {result}"), result))
+            Some((format!("= {result}"), Some(result)))
         }
-        Err(_) => None,
+        Err(_) => Some(("= (invalid expression)".to_string(), None)),
     }
 }
 
@@ -345,20 +357,31 @@ fn activate_index(list: &ListBox, state: &UiState, app: &Application, idx: usize
     match item {
         ResultItem::App(a) => {
             state.recents.borrow_mut().record(&a.desktop_id);
-            let _ = launch::launch_app(&a);
-            app.quit();
+            if let Err(e) = launch::launch_app(&a) {
+                eprintln!("launch_app({}): {e}", a.name);
+            }
+            quit_soon(app);
         }
         ResultItem::Calc { result, .. } => {
+            let Some(result) = result else {
+                // Invalid expression row — no-op on Enter.
+                return;
+            };
             copy_to_clipboard(&result);
-            app.quit();
+            quit_soon(app);
         }
         ResultItem::Web { url, .. } => {
-            let _ = launch::open_uri(&url);
-            app.quit();
+            if let Err(e) = launch::open_uri(&url) {
+                eprintln!("open_uri: {e}");
+            }
+            // Give xdg-open time to start before GTK tears down.
+            quit_soon(app);
         }
         ResultItem::Extra { exec, .. } => {
-            let _ = launch::run_shell(&exec);
-            app.quit();
+            if let Err(e) = launch::run_shell(&exec) {
+                eprintln!("run_shell: {e}");
+            }
+            quit_soon(app);
         }
     }
     let _ = list;
@@ -583,6 +606,67 @@ fn main() -> glib::ExitCode {
         build_ui(app, apps.clone());
     });
     app.run()
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_calc, parse_web_action};
+
+    #[test]
+    fn calc_with_and_without_space() {
+        let (d, r) = parse_calc("=2+2").unwrap();
+        assert_eq!(r.as_deref(), Some("4"));
+        assert!(d.contains('4'));
+
+        let (d, r) = parse_calc("= 2+2").unwrap();
+        assert_eq!(r.as_deref(), Some("4"));
+        assert!(d.contains('4'));
+    }
+
+    #[test]
+    fn calc_empty_and_invalid() {
+        assert!(parse_calc("=").is_none());
+        assert!(parse_calc("=   ").is_none());
+        let (d, r) = parse_calc("=2+").unwrap();
+        assert!(r.is_none());
+        assert!(d.contains("invalid"));
+    }
+
+    #[test]
+    fn web_question_with_and_without_space() {
+        let (t, u) = parse_web_action("?rust").unwrap();
+        assert!(t.contains("DuckDuckGo"));
+        assert!(u.contains("duckduckgo.com"));
+        assert!(u.contains("rust"));
+
+        let (t, u) = parse_web_action("? rust lang").unwrap();
+        assert!(t.contains("DuckDuckGo"));
+        assert!(u.contains("rust"));
+    }
+
+    #[test]
+    fn web_engines_and_empty() {
+        assert!(parse_web_action("ddg").is_none());
+        assert!(parse_web_action("ddg ").is_none());
+        assert!(parse_web_action("?").is_none());
+
+        let (t, u) = parse_web_action("ddg hello").unwrap();
+        assert!(t.contains("DuckDuckGo"));
+        assert!(u.contains("hello"));
+
+        let (t, u) = parse_web_action("gs hello").unwrap();
+        assert!(t.contains("Google"));
+        assert!(u.contains("google.com"));
+
+        let (t, u) = parse_web_action("google hello world").unwrap();
+        assert!(t.contains("Google"));
+        assert!(u.contains("hello"));
+
+        let (t, u) = parse_web_action("https://example.com").unwrap();
+        assert!(t.contains("Open"));
+        assert_eq!(u, "https://example.com");
+    }
 }
 
 mod raw_libc {
