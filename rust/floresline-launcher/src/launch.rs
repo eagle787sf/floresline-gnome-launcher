@@ -1,6 +1,5 @@
 //! Launch selected desktop applications (mirrors Python `launch`).
 
-use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -95,65 +94,4 @@ pub fn run_shell(cmd: &str) -> Result<(), String> {
         eprintln!("run_shell({cmd}): {e}");
         e
     })
-}
-
-fn pipe_stdin_copy(bin: PathBuf, args: &[&str], text: &str, label: &str) -> bool {
-    let mut child = match Command::new(bin)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("{label} spawn: {e}");
-            return false;
-        }
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        if let Err(e) = stdin.write_all(text.as_bytes()) {
-            eprintln!("{label} write: {e}");
-            return false;
-        }
-    }
-    // Don't wait — keep the child alive briefly after parent may quit.
-    let _ = child;
-    true
-}
-
-/// Copy text via `wl-copy` when available (Wayland clipboard often needs this).
-pub fn copy_via_wl_copy(text: &str) -> bool {
-    let Some(bin) = which("wl-copy") else {
-        return false;
-    };
-    pipe_stdin_copy(bin, &[], text, "wl-copy")
-}
-
-/// Copy text via `xclip -selection clipboard` when available (X11 / XWayland fallback).
-pub fn copy_via_xclip(text: &str) -> bool {
-    let Some(bin) = which("xclip") else {
-        return false;
-    };
-    pipe_stdin_copy(bin, &["-selection", "clipboard"], text, "xclip")
-}
-
-/// Desktop notification via `notify-send` when available.
-/// Pass an empty `body` for summary-only (e.g. Pop-style "Copied to clipboard").
-pub fn notify_send(summary: &str, body: &str) -> bool {
-    let Some(bin) = which("notify-send") else {
-        return false;
-    };
-    let mut cmd = Command::new(bin);
-    cmd.arg(summary);
-    if !body.is_empty() {
-        cmd.arg(body);
-    }
-    match cmd.stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
-        Ok(_) => true,
-        Err(e) => {
-            eprintln!("notify-send: {e}");
-            false
-        }
-    }
 }

@@ -1,6 +1,5 @@
 //! Floresline GNOME launcher — Rust + GTK4 (Pop-style prefixes + recents).
 
-mod calc;
 mod desktop;
 mod extras;
 mod fuzzy;
@@ -90,15 +89,10 @@ impl Drop for PidGuard {
     }
 }
 
-/// Visible result row: app or a special action (calc / web / URL / extra).
+/// Visible result row: app or a special action (web / URL / extra).
 #[derive(Clone)]
 enum ResultItem {
     App(desktop::AppEntry),
-    Calc {
-        title: String,
-        subtitle: String,
-        result: Option<String>,
-    },
     Web { title: String, url: String },
     Extra { label: String, exec: String },
 }
@@ -129,16 +123,6 @@ fn focus_entry(entry: &Entry) {
     let len = text.len() as i32;
     entry.select_region(len, len);
     entry.set_position(len);
-}
-
-fn copy_to_clipboard(text: &str) {
-    if let Some(display) = Display::default() {
-        display.clipboard().set_text(text);
-    }
-    // Wayland: GTK clipboard often does not stick after immediate quit.
-    let _ = launch::copy_via_wl_copy(text);
-    // X11 / XWayland fallback when wl-clipboard is not installed.
-    let _ = launch::copy_via_xclip(text);
 }
 
 /// Delay quit so detached children / clipboard clients can start.
@@ -208,13 +192,7 @@ fn rebuild_list(
 
     let mut items: Vec<ResultItem> = Vec::new();
 
-    if let Some(row) = calc::parse_calc(query) {
-        items.push(ResultItem::Calc {
-            title: row.title,
-            subtitle: row.subtitle,
-            result: row.result,
-        });
-    } else if let Some((title, url)) = parse_web_action(query) {
+    if let Some((title, url)) = parse_web_action(query) {
         items.push(ResultItem::Web { title, url });
     } else {
         for ex in &state.extras {
@@ -227,7 +205,7 @@ fn rebuild_list(
         }
         let recents = state.recents.borrow();
         let scored = fuzzy::rank(query, apps, &recents);
-        for (_, a) in scored.into_iter().take(50) {
+        for (_, a) in scored.into_iter().take(9) {
             items.push(ResultItem::App(a));
         }
     }
@@ -273,28 +251,6 @@ fn rebuild_list(
                 col.append(&name);
                 if !a.comment.is_empty() {
                     let c = Label::new(Some(&a.comment));
-                    c.set_xalign(0.0);
-                    c.add_css_class("dim-label");
-                    c.set_ellipsize(pango::EllipsizeMode::End);
-                    col.append(&c);
-                }
-                box_.append(&col);
-            }
-            ResultItem::Calc {
-                title,
-                subtitle,
-                ..
-            } => {
-                let icon = Image::from_icon_name("accessories-calculator");
-                icon.set_pixel_size(28);
-                box_.append(&icon);
-                let col = GtkBox::new(Orientation::Vertical, 0);
-                let name = Label::new(Some(title));
-                name.set_xalign(0.0);
-                name.add_css_class("title");
-                col.append(&name);
-                if !subtitle.is_empty() {
-                    let c = Label::new(Some(subtitle));
                     c.set_xalign(0.0);
                     c.add_css_class("dim-label");
                     c.set_ellipsize(pango::EllipsizeMode::End);
@@ -351,22 +307,11 @@ fn move_sel(list: &ListBox, state: &UiState, entry: &Entry, delta: i32) -> bool 
     true
 }
 
-/// Copy calc result and quit quickly — no rebuild, no gnome-calculator spawn.
-fn finish_calc_copy(app: &Application, entry: &Entry, state: &UiState, result: &str) {
-    state.ignore_changed.set(true);
-    entry.set_text(result);
-    state.ignore_changed.set(false);
-    copy_to_clipboard(result);
-    let _ = launch::notify_send("Copied to clipboard", result);
-    // Short delay so notify/clipboard can flush; keep light — no extra processes.
-    quit_after(app, 180);
-}
-
 fn activate_index(
     _list: &ListBox,
     state: &Rc<UiState>,
     app: &Application,
-    entry: &Entry,
+    _entry: &Entry,
     _apps: &Rc<Vec<desktop::AppEntry>>,
     idx: usize,
 ) {
@@ -384,15 +329,6 @@ fn activate_index(
                 eprintln!("launch_app({}): {e}", a.name);
             }
             quit_soon(app);
-        }
-        ResultItem::Calc { result, .. } => {
-            let Some(preview) = result else {
-                // Hint / invalid expression row — no-op on Enter.
-                return;
-            };
-            // Use live preview only (meval/bc). Spawning gnome-calculator on Enter
-            // caused hangs/memory spikes after the "Copied" notification.
-            finish_calc_copy(app, entry, state, &preview);
         }
         ResultItem::Web { url, .. } => {
             if let Err(e) = launch::open_uri(&url) {
@@ -490,7 +426,7 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
     scrolled.set_child(Some(&list));
 
     let hint = Label::new(Some(
-        "= 2+2 calc · ?/ddg/gs search · Alt+1-9 · ↑↓ · Enter · Esc",
+        "?/ddg/gs search · Alt+1-9 · ↑↓ · Enter · Esc",
     ));
     hint.add_css_class("dim-label");
     hint.set_margin_top(6);
@@ -592,15 +528,14 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
                 id.remove();
             }
             let q = ent.text().to_string();
-            let immediate = calc::is_calc_query(&q);
             let entry_d = entry_c.clone();
             let list_d = list_c.clone();
             let state_d = state_c.clone();
             let apps_d = apps_c.clone();
-            let refresh = move || {
+            let sid = glib::timeout_add_local(Duration::from_millis(40), move || {
                 state_d.refresh_id.set(None);
                 if entry_d.text() != q {
-                    return;
+                    return ControlFlow::Break;
                 }
                 let pos = entry_d.position();
                 rebuild_list(&list_d, &apps_d, &q, &state_d);
@@ -609,17 +544,9 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
                 let set_pos = if pos >= 0 { pos } else { q.len() as i32 };
                 entry_d.set_position(set_pos);
                 state_d.ignore_changed.set(false);
-            };
-            // Calc prefixes feel laggy with debounce — rebuild immediately.
-            if immediate {
-                refresh();
-            } else {
-                let sid = glib::timeout_add_local(Duration::from_millis(40), move || {
-                    refresh();
-                    ControlFlow::Break
-                });
-                state_c.refresh_id.set(Some(sid));
-            }
+                ControlFlow::Break
+            });
+            state_c.refresh_id.set(Some(sid));
         });
     }
 

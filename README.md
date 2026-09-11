@@ -10,8 +10,7 @@ Inspired by [Pop Launcher Super-Key](https://extensions.gnome.org/extension/4797
 ## Features
 
 - **Fuzzy search** across `.desktop` apps (system, Flatpak, Snap, `~/.local`)
-- **Pop-style prefixes** for calculator, web search, and optional extras
-- **Calculator**: type `=` then an expression (e.g. `=2+2`). Bare `=` shows a hint. **Enter** copies the result (notification). Live preview uses fast built-in math; **GNOME Calculator** is used on Enter when available
+- **Pop-style prefixes** for web search and optional extras
 - **Web search**: `? query`, `ddg …`, `google …`, `gs …` (opens in the browser); bare `https://…` URLs open directly
 - **Recents** — frequently/recently launched apps rise to the top (empty query prefers them)
 - **Alt+1…9** launch the nth visible result (number badges on the first 9 rows)
@@ -30,7 +29,6 @@ Inspired by [Pop Launcher Super-Key](https://extensions.gnome.org/extension/4797
 | Desktop | GNOME Shell **45–50** (tested on **50.1** / Ubuntu) |
 | Session | Wayland or X11 |
 | Runtime | Rust + GTK4 binary (preferred when built) or Python 3.10+ / PyGObject |
-| Calculator | Live preview: built-in math. Enter: `gnome-calculator` when installed (`sudo apt install -y gnome-calculator`) |
 | Super-key bind | Log out/in once after installing the GJS extension (Wayland) |
 
 ## Quick install
@@ -62,9 +60,8 @@ floresline-launcher-toggle
 | `Super` + `/` | Launcher |
 | `Super` + `A` | GNOME app grid |
 | `↑` `↓` | Move selection |
-| `Enter` | Launch / copy calc / open search |
+| `Enter` | Launch / open search |
 | `Alt` + `1`…`9` | Launch nth result |
-| `=` expr | Calculator (`=2+2`; bare `=` shows a hint; Enter copies) |
 | `?` / `ddg` / `gs` / `google` | Web search |
 | `https://…` | Open URL |
 | `Esc` | Close |
@@ -93,7 +90,7 @@ Log out/in to unload the extension.
 ```
 bin/                      # Python launcher fallback + toggle scripts
 extension/                # GNOME Shell Super-key extension (ESM / GJS, 45+)
-rust/floresline-launcher/ # Rust + GTK4 launcher (v0.2.5)
+rust/floresline-launcher/ # Rust + GTK4 launcher (v0.2.6)
 packaging/                # Prebuilt .shell-extension.zip
 install.sh / uninstall.sh
 docs/                     # Extra notes (incl. RUST.md)
@@ -101,7 +98,7 @@ docs/                     # Extra notes (incl. RUST.md)
 
 ## Rust port
 
-A native **Rust + GTK4** rewrite lives under `rust/floresline-launcher/` (v0.2.5). `install.sh` prefers the release binary when present and keeps Python as `floresline-launcher-python`. See [docs/RUST.md](docs/RUST.md) for deps, calculator backends, and `cargo build --release`.
+A native **Rust + GTK4** rewrite lives under `rust/floresline-launcher/` (v0.2.6). `install.sh` prefers the release binary when present and keeps Python as `floresline-launcher-python`. See [docs/RUST.md](docs/RUST.md) for deps and `cargo build --release`.
 
 ## Manual extension zip
 
