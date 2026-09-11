@@ -97,12 +97,9 @@ pub fn run_shell(cmd: &str) -> Result<(), String> {
     })
 }
 
-/// Copy text via `wl-copy` when available (Wayland clipboard often needs this).
-pub fn copy_via_wl_copy(text: &str) -> bool {
-    let Some(bin) = which("wl-copy") else {
-        return false;
-    };
+fn pipe_stdin_copy(bin: PathBuf, args: &[&str], text: &str, label: &str) -> bool {
     let mut child = match Command::new(bin)
+        .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -110,17 +107,52 @@ pub fn copy_via_wl_copy(text: &str) -> bool {
     {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("wl-copy spawn: {e}");
+            eprintln!("{label} spawn: {e}");
             return false;
         }
     };
     if let Some(mut stdin) = child.stdin.take() {
         if let Err(e) = stdin.write_all(text.as_bytes()) {
-            eprintln!("wl-copy write: {e}");
+            eprintln!("{label} write: {e}");
             return false;
         }
     }
-    // Don't wait — detachment isn't critical; brief lifetime is fine.
+    // Don't wait — keep the child alive briefly after parent may quit.
     let _ = child;
     true
+}
+
+/// Copy text via `wl-copy` when available (Wayland clipboard often needs this).
+pub fn copy_via_wl_copy(text: &str) -> bool {
+    let Some(bin) = which("wl-copy") else {
+        return false;
+    };
+    pipe_stdin_copy(bin, &[], text, "wl-copy")
+}
+
+/// Copy text via `xclip -selection clipboard` when available (X11 / XWayland fallback).
+pub fn copy_via_xclip(text: &str) -> bool {
+    let Some(bin) = which("xclip") else {
+        return false;
+    };
+    pipe_stdin_copy(bin, &["-selection", "clipboard"], text, "xclip")
+}
+
+/// Desktop notification via `notify-send` when available.
+pub fn notify_send(summary: &str, body: &str) -> bool {
+    let Some(bin) = which("notify-send") else {
+        return false;
+    };
+    match Command::new(bin)
+        .args([summary, body])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(_) => true,
+        Err(e) => {
+            eprintln!("notify-send: {e}");
+            false
+        }
+    }
 }

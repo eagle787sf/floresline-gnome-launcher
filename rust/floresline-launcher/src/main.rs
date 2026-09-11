@@ -132,12 +132,18 @@ fn copy_to_clipboard(text: &str) {
     }
     // Wayland: GTK clipboard often does not stick after immediate quit.
     let _ = launch::copy_via_wl_copy(text);
+    // X11 / XWayland fallback when wl-clipboard is not installed.
+    let _ = launch::copy_via_xclip(text);
 }
 
 /// Delay quit so detached children / clipboard clients can start.
 fn quit_soon(app: &Application) {
+    quit_after(app, 200);
+}
+
+fn quit_after(app: &Application, ms: u64) {
     let app = app.clone();
-    glib::timeout_add_local_once(Duration::from_millis(200), move || {
+    glib::timeout_add_local_once(Duration::from_millis(ms), move || {
         app.quit();
     });
 }
@@ -184,16 +190,25 @@ pub(crate) fn parse_web_action(query: &str) -> Option<(String, String)> {
     Some((format!("Search {engine}: {rest}"), url))
 }
 
-/// Parse `=` calculator prefix. Returns (display, Some(result)) on success,
-/// (display, None) for invalid expressions, or None if not a calc query.
+/// True when the query is (or is becoming) a calculator expression.
+fn is_calc_query(query: &str) -> bool {
+    let t = query.trim_start();
+    t.starts_with('=') || t.starts_with('＝')
+}
+
+/// Parse `=` / `＝` calculator prefix. Returns (display, Some(result)) on success,
+/// (display, None) for bare `=` hint or invalid expressions, or None if not calc.
 pub(crate) fn parse_calc(query: &str) -> Option<(String, Option<String>)> {
     let q = query.trim();
-    if !q.starts_with('=') {
+    let expr = if let Some(rest) = q.strip_prefix('=') {
+        rest.trim()
+    } else if let Some(rest) = q.strip_prefix('＝') {
+        rest.trim()
+    } else {
         return None;
-    }
-    let expr = q[1..].trim();
+    };
     if expr.is_empty() {
-        return None;
+        return Some(("= type expression (e.g. 2+2)".to_string(), None));
     }
     match meval::eval_str(expr) {
         Ok(v) => {
@@ -346,7 +361,14 @@ fn move_sel(list: &ListBox, state: &UiState, entry: &Entry, delta: i32) -> bool 
     true
 }
 
-fn activate_index(list: &ListBox, state: &UiState, app: &Application, idx: usize) {
+fn activate_index(
+    list: &ListBox,
+    state: &UiState,
+    app: &Application,
+    entry: &Entry,
+    apps: &[desktop::AppEntry],
+    idx: usize,
+) {
     let item = {
         let results = state.results.borrow();
         if idx >= results.len() {
@@ -364,11 +386,20 @@ fn activate_index(list: &ListBox, state: &UiState, app: &Application, idx: usize
         }
         ResultItem::Calc { result, .. } => {
             let Some(result) = result else {
-                // Invalid expression row — no-op on Enter.
+                // Hint / invalid expression row — no-op on Enter.
                 return;
             };
+            // Show the answer in the entry and calc row before quitting so
+            // Enter feels successful even when clipboard helpers are missing.
+            state.ignore_changed.set(true);
+            entry.set_text(&result);
+            state.ignore_changed.set(false);
+            let calc_q = format!("={result}");
+            rebuild_list(list, apps, &calc_q, state);
             copy_to_clipboard(&result);
-            quit_soon(app);
+            let _ = launch::notify_send("Floresline calc", &format!("Copied: {result}"));
+            // Stay open long enough for notify-send + clipboard clients on Wayland.
+            quit_after(app, 900);
         }
         ResultItem::Web { url, .. } => {
             if let Err(e) = launch::open_uri(&url) {
@@ -384,12 +415,17 @@ fn activate_index(list: &ListBox, state: &UiState, app: &Application, idx: usize
             quit_soon(app);
         }
     }
-    let _ = list;
 }
 
-fn launch_selected(list: &ListBox, state: &UiState, app: &Application) {
+fn launch_selected(
+    list: &ListBox,
+    state: &UiState,
+    app: &Application,
+    entry: &Entry,
+    apps: &[desktop::AppEntry],
+) {
     let idx = list.selected_row().map(|r| r.index()).unwrap_or(0) as usize;
-    activate_index(list, state, app, idx);
+    activate_index(list, state, app, entry, apps, idx);
 }
 
 fn alt_digit_index(keyval: Key, modifiers: ModifierType) -> Option<usize> {
@@ -461,7 +497,7 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
     scrolled.set_child(Some(&list));
 
     let hint = Label::new(Some(
-        "= calc · ?/ddg/gs search · Alt+1-9 · ↑↓ · Enter · Esc",
+        "= 2+2 calc · ?/ddg/gs search · Alt+1-9 · ↑↓ · Enter · Esc",
     ));
     hint.add_css_class("dim-label");
     hint.set_margin_top(6);
@@ -473,13 +509,14 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
         let list_c = list.clone();
         let state_c = state.clone();
         let entry_c = entry.clone();
+        let apps_c = apps.clone();
         keys.connect_key_pressed(move |_, keyval, _code, modifiers| {
             if keyval == Key::Escape {
                 app_c.quit();
                 return glib::Propagation::Stop;
             }
             if let Some(n) = alt_digit_index(keyval, modifiers) {
-                activate_index(&list_c, &state_c, &app_c, n);
+                activate_index(&list_c, &state_c, &app_c, &entry_c, &apps_c, n);
                 return glib::Propagation::Stop;
             }
             if keyval == Key::Down || keyval == Key::KP_Down || keyval == Key::Tab {
@@ -491,7 +528,7 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
                 return glib::Propagation::Stop;
             }
             if keyval == Key::Return || keyval == Key::KP_Enter {
-                launch_selected(&list_c, &state_c, &app_c);
+                launch_selected(&list_c, &state_c, &app_c, &entry_c, &apps_c);
                 return glib::Propagation::Stop;
             }
             glib::Propagation::Proceed
@@ -503,8 +540,10 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
         let app_c = app.clone();
         let list_c = list.clone();
         let state_c = state.clone();
+        let entry_c = entry.clone();
+        let apps_c = apps.clone();
         entry.connect_activate(move |_| {
-            launch_selected(&list_c, &state_c, &app_c);
+            launch_selected(&list_c, &state_c, &app_c, &entry_c, &apps_c);
         });
     }
 
@@ -512,8 +551,10 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
         let app_c = app.clone();
         let list_c = list.clone();
         let state_c = state.clone();
+        let entry_c = entry.clone();
+        let apps_c = apps.clone();
         list.connect_row_activated(move |_, _| {
-            launch_selected(&list_c, &state_c, &app_c);
+            launch_selected(&list_c, &state_c, &app_c, &entry_c, &apps_c);
         });
     }
 
@@ -558,14 +599,15 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
                 id.remove();
             }
             let q = ent.text().to_string();
+            let immediate = is_calc_query(&q);
             let entry_d = entry_c.clone();
             let list_d = list_c.clone();
             let state_d = state_c.clone();
             let apps_d = apps_c.clone();
-            let sid = glib::timeout_add_local(Duration::from_millis(40), move || {
+            let refresh = move || {
                 state_d.refresh_id.set(None);
                 if entry_d.text() != q {
-                    return ControlFlow::Break;
+                    return;
                 }
                 let pos = entry_d.position();
                 rebuild_list(&list_d, &apps_d, &q, &state_d);
@@ -574,9 +616,17 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
                 let set_pos = if pos >= 0 { pos } else { q.len() as i32 };
                 entry_d.set_position(set_pos);
                 state_d.ignore_changed.set(false);
-                ControlFlow::Break
-            });
-            state_c.refresh_id.set(Some(sid));
+            };
+            // Calc prefixes feel laggy with debounce — rebuild immediately.
+            if immediate {
+                refresh();
+            } else {
+                let sid = glib::timeout_add_local(Duration::from_millis(40), move || {
+                    refresh();
+                    ControlFlow::Break
+                });
+                state_c.refresh_id.set(Some(sid));
+            }
         });
     }
 
@@ -625,12 +675,37 @@ mod tests {
     }
 
     #[test]
-    fn calc_empty_and_invalid() {
-        assert!(parse_calc("=").is_none());
-        assert!(parse_calc("=   ").is_none());
+    fn calc_bare_equals_shows_hint() {
+        let (d, r) = parse_calc("=").unwrap();
+        assert!(r.is_none());
+        assert!(d.contains("type expression"));
+
+        let (d, r) = parse_calc("=   ").unwrap();
+        assert!(r.is_none());
+        assert!(d.contains("type expression"));
+    }
+
+    #[test]
+    fn calc_fullwidth_equals() {
+        let (d, r) = parse_calc("＝2+2").unwrap();
+        assert_eq!(r.as_deref(), Some("4"));
+        assert!(d.contains('4'));
+
+        let (d, r) = parse_calc("＝ 3*3").unwrap();
+        assert_eq!(r.as_deref(), Some("9"));
+        assert!(d.contains('9'));
+
+        let (d, r) = parse_calc("＝").unwrap();
+        assert!(r.is_none());
+        assert!(d.contains("type expression"));
+    }
+
+    #[test]
+    fn calc_invalid() {
         let (d, r) = parse_calc("=2+").unwrap();
         assert!(r.is_none());
         assert!(d.contains("invalid"));
+        assert!(parse_calc("hello").is_none());
     }
 
     #[test]
