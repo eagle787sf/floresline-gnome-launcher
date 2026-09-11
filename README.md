@@ -78,12 +78,17 @@ Log out/in to unload the extension.
 ## Project layout
 
 ```
-bin/                      # Launcher + toggle scripts
-extension/                # GNOME Shell extension (ESM, 45+)
+bin/                      # Launcher + toggle scripts (Python — supported default)
+extension/                # GNOME Shell extension (ESM / GJS, 45+)
+rust/floresline-launcher/ # Rust + GTK4 port (WIP)
 packaging/                # Prebuilt .shell-extension.zip
 install.sh / uninstall.sh
-docs/                     # Extra notes
+docs/                     # Extra notes (incl. RUST.md)
 ```
+
+## Rust port (WIP)
+
+A native **Rust + GTK4** rewrite lives under `rust/floresline-launcher/`. It is incomplete; **Python + install.sh remains the supported install path**. See [docs/RUST.md](docs/RUST.md) for deps and `cargo run`.
 
 ## Manual extension zip
 
