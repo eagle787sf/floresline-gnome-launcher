@@ -139,16 +139,17 @@ pub fn copy_via_xclip(text: &str) -> bool {
 }
 
 /// Desktop notification via `notify-send` when available.
+/// Pass an empty `body` for summary-only (e.g. Pop-style "Copied to clipboard").
 pub fn notify_send(summary: &str, body: &str) -> bool {
     let Some(bin) = which("notify-send") else {
         return false;
     };
-    match Command::new(bin)
-        .args([summary, body])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
+    let mut cmd = Command::new(bin);
+    cmd.arg(summary);
+    if !body.is_empty() {
+        cmd.arg(body);
+    }
+    match cmd.stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
         Ok(_) => true,
         Err(e) => {
             eprintln!("notify-send: {e}");

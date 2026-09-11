@@ -1,5 +1,6 @@
 //! Floresline GNOME launcher — Rust + GTK4 (Pop-style prefixes + recents).
 
+mod calc;
 mod desktop;
 mod extras;
 mod fuzzy;
@@ -93,7 +94,11 @@ impl Drop for PidGuard {
 #[derive(Clone)]
 enum ResultItem {
     App(desktop::AppEntry),
-    Calc { display: String, result: Option<String> },
+    Calc {
+        title: String,
+        subtitle: String,
+        result: Option<String>,
+    },
     Web { title: String, url: String },
     Extra { label: String, exec: String },
 }
@@ -190,38 +195,6 @@ pub(crate) fn parse_web_action(query: &str) -> Option<(String, String)> {
     Some((format!("Search {engine}: {rest}"), url))
 }
 
-/// True when the query is (or is becoming) a calculator expression.
-fn is_calc_query(query: &str) -> bool {
-    let t = query.trim_start();
-    t.starts_with('=') || t.starts_with('＝')
-}
-
-/// Parse `=` / `＝` calculator prefix. Returns (display, Some(result)) on success,
-/// (display, None) for bare `=` hint or invalid expressions, or None if not calc.
-pub(crate) fn parse_calc(query: &str) -> Option<(String, Option<String>)> {
-    let q = query.trim();
-    let expr = if let Some(rest) = q.strip_prefix('=') {
-        rest.trim()
-    } else if let Some(rest) = q.strip_prefix('＝') {
-        rest.trim()
-    } else {
-        return None;
-    };
-    if expr.is_empty() {
-        return Some(("= type expression (e.g. 2+2)".to_string(), None));
-    }
-    match meval::eval_str(expr) {
-        Ok(v) => {
-            let result = if (v - v.round()).abs() < 1e-10 && v.abs() < 1e15 {
-                format!("{}", v.round() as i64)
-            } else {
-                format!("{v}")
-            };
-            Some((format!("= {result}"), Some(result)))
-        }
-        Err(_) => Some(("= (invalid expression)".to_string(), None)),
-    }
-}
 
 fn rebuild_list(
     list: &ListBox,
@@ -235,8 +208,12 @@ fn rebuild_list(
 
     let mut items: Vec<ResultItem> = Vec::new();
 
-    if let Some((display, result)) = parse_calc(query) {
-        items.push(ResultItem::Calc { display, result });
+    if let Some(row) = calc::parse_calc(query) {
+        items.push(ResultItem::Calc {
+            title: row.title,
+            subtitle: row.subtitle,
+            result: row.result,
+        });
     } else if let Some((title, url)) = parse_web_action(query) {
         items.push(ResultItem::Web { title, url });
     } else {
@@ -303,14 +280,27 @@ fn rebuild_list(
                 }
                 box_.append(&col);
             }
-            ResultItem::Calc { display, .. } => {
+            ResultItem::Calc {
+                title,
+                subtitle,
+                ..
+            } => {
                 let icon = Image::from_icon_name("accessories-calculator");
                 icon.set_pixel_size(28);
                 box_.append(&icon);
-                let name = Label::new(Some(display));
+                let col = GtkBox::new(Orientation::Vertical, 0);
+                let name = Label::new(Some(title));
                 name.set_xalign(0.0);
                 name.add_css_class("title");
-                box_.append(&name);
+                col.append(&name);
+                if !subtitle.is_empty() {
+                    let c = Label::new(Some(subtitle));
+                    c.set_xalign(0.0);
+                    c.add_css_class("dim-label");
+                    c.set_ellipsize(pango::EllipsizeMode::End);
+                    col.append(&c);
+                }
+                box_.append(&col);
             }
             ResultItem::Web { title, .. } => {
                 let icon = Image::from_icon_name("web-browser");
@@ -396,8 +386,9 @@ fn activate_index(
             state.ignore_changed.set(false);
             let calc_q = format!("={result}");
             rebuild_list(list, apps, &calc_q, state);
+            // GNOME-native GTK clipboard first; wl-copy / xclip optional helpers.
             copy_to_clipboard(&result);
-            let _ = launch::notify_send("Floresline calc", &format!("Copied: {result}"));
+            let _ = launch::notify_send("Copied to clipboard", "");
             // Stay open long enough for notify-send + clipboard clients on Wayland.
             quit_after(app, 900);
         }
@@ -599,7 +590,7 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
                 id.remove();
             }
             let q = ent.text().to_string();
-            let immediate = is_calc_query(&q);
+            let immediate = calc::is_calc_query(&q);
             let entry_d = entry_c.clone();
             let list_d = list_c.clone();
             let state_d = state_c.clone();
@@ -661,52 +652,7 @@ fn main() -> glib::ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_calc, parse_web_action};
-
-    #[test]
-    fn calc_with_and_without_space() {
-        let (d, r) = parse_calc("=2+2").unwrap();
-        assert_eq!(r.as_deref(), Some("4"));
-        assert!(d.contains('4'));
-
-        let (d, r) = parse_calc("= 2+2").unwrap();
-        assert_eq!(r.as_deref(), Some("4"));
-        assert!(d.contains('4'));
-    }
-
-    #[test]
-    fn calc_bare_equals_shows_hint() {
-        let (d, r) = parse_calc("=").unwrap();
-        assert!(r.is_none());
-        assert!(d.contains("type expression"));
-
-        let (d, r) = parse_calc("=   ").unwrap();
-        assert!(r.is_none());
-        assert!(d.contains("type expression"));
-    }
-
-    #[test]
-    fn calc_fullwidth_equals() {
-        let (d, r) = parse_calc("＝2+2").unwrap();
-        assert_eq!(r.as_deref(), Some("4"));
-        assert!(d.contains('4'));
-
-        let (d, r) = parse_calc("＝ 3*3").unwrap();
-        assert_eq!(r.as_deref(), Some("9"));
-        assert!(d.contains('9'));
-
-        let (d, r) = parse_calc("＝").unwrap();
-        assert!(r.is_none());
-        assert!(d.contains("type expression"));
-    }
-
-    #[test]
-    fn calc_invalid() {
-        let (d, r) = parse_calc("=2+").unwrap();
-        assert!(r.is_none());
-        assert!(d.contains("invalid"));
-        assert!(parse_calc("hello").is_none());
-    }
+    use super::parse_web_action;
 
     #[test]
     fn web_question_with_and_without_space() {

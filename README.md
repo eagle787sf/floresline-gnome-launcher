@@ -11,7 +11,7 @@ Inspired by [Pop Launcher Super-Key](https://extensions.gnome.org/extension/4797
 
 - **Fuzzy search** across `.desktop` apps (system, Flatpak, Snap, `~/.local`)
 - **Recents boost** — frequently/recently launched apps rise to the top (empty query prefers them)
-- **Calculator**: type `= 2+2` → Enter copies the result to the clipboard
+- **Calculator**: type `= 2+2` → Enter copies the result (`gnome-calculator -s` when installed; else built-in meval/`bc`)
 - **Web search**: `? query`, `ddg …`, `google …`, `gs …` (opens in browser); bare `https://…` opens directly
 - **Alt+1…9** launch the nth visible result (number badges on the first 9 rows)
 - **Search field keeps focus** while you type multi-letter queries
@@ -29,6 +29,7 @@ Inspired by [Pop Launcher Super-Key](https://extensions.gnome.org/extension/4797
 | Desktop | GNOME Shell **45–50** (tested on **50.1** / Ubuntu) |
 | Session | Wayland or X11 |
 | Runtime | Rust + GTK4 binary (preferred when built) or Python 3.10+ / PyGObject |
+| Calculator | `gnome-calculator` recommended (`sudo apt install -y gnome-calculator`); meval/`bc` fallback |
 | Super-key bind | Log out/in once after installing the extension (Wayland) |
 
 ## Quick install
