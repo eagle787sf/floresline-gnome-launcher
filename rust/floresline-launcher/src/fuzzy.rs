@@ -1,28 +1,43 @@
-//! Fuzzy matching / ranking for launcher queries.
-//!
-//! TODO: implement a real score against app names and keywords.
+//! Fuzzy matching / ranking — same algorithm as Python `fuzzy_score`.
 
-use crate::desktop::DesktopApp;
+use crate::desktop::AppEntry;
 
 /// Score how well `query` matches `app`. Higher is better; `None` = no match.
-///
-/// Currently a stub that treats empty queries as matching everything with score 0.
-pub fn score(query: &str, app: &DesktopApp) -> Option<i32> {
-    let q = query.trim();
+pub fn score(query: &str, app: &AppEntry) -> Option<i32> {
+    let q = query.trim().to_lowercase();
     if q.is_empty() {
         return Some(0);
     }
-    // TODO: fuzzy score against app.name / keywords
-    let _ = app;
+    let name = app.name.to_lowercase();
+    let h = app.haystack();
+
+    if name.starts_with(&q) {
+        return Some(1000 - name.len() as i32);
+    }
+    if let Some(pos) = name.find(&q) {
+        return Some(800 - pos as i32);
+    }
+    // all tokens in haystack
+    if q.split_whitespace().all(|tok| h.contains(tok)) {
+        return Some(500);
+    }
+    // subsequence: every char of q appears in order in h (Python `all(ch in it for ch in q)`)
+    let mut it = h.chars();
+    if q.chars().all(|ch| it.any(|c| c == ch)) {
+        return Some(200 - h.len() as i32);
+    }
     None
 }
 
-/// Filter and sort apps by fuzzy score (stub).
-pub fn rank(query: &str, apps: &[DesktopApp]) -> Vec<(i32, DesktopApp)> {
-    let mut scored: Vec<(i32, DesktopApp)> = apps
+/// Filter and sort apps by fuzzy score (descending), then name.
+pub fn rank(query: &str, apps: &[AppEntry]) -> Vec<(i32, AppEntry)> {
+    let mut scored: Vec<(i32, AppEntry)> = apps
         .iter()
         .filter_map(|app| score(query, app).map(|s| (s, app.clone())))
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| a.1.name.to_lowercase().cmp(&b.1.name.to_lowercase()))
+    });
     scored
 }

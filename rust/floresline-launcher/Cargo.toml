@@ -2,7 +2,7 @@
 name = "floresline-launcher"
 version = "0.1.0"
 edition = "2021"
-description = "Floresline GNOME fuzzy app launcher (Rust + GTK4 port, WIP)"
+description = "Floresline GNOME fuzzy app launcher (Rust + GTK4)"
 license = "MIT"
 publish = false
 
@@ -11,3 +11,4 @@ publish = false
 # Ubuntu 24.04+ GTK. Bump the crate version and/or feature (e.g. v4_14) when
 # targeting newer GTK APIs — see https://gtk-rs.org/gtk4-rs/stable/latest/book/
 gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
+shlex = "1.3"

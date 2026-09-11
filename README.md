@@ -23,7 +23,7 @@ Inspired by [Pop Launcher Super-Key](https://extensions.gnome.org/extension/4797
 |-----------|-------------|
 | Desktop | GNOME Shell **45–50** (tested on **50.1** / Ubuntu) |
 | Session | Wayland or X11 |
-| Runtime | Python 3.10+ with `PyGObject` (GTK 4) — default on Ubuntu |
+| Runtime | Rust + GTK4 binary (preferred when built) or Python 3.10+ / PyGObject |
 | Super-key bind | Log out/in once after installing the extension (Wayland) |
 
 ## Quick install
@@ -78,17 +78,17 @@ Log out/in to unload the extension.
 ## Project layout
 
 ```
-bin/                      # Launcher + toggle scripts (Python — supported default)
+bin/                      # Python launcher fallback + toggle scripts
 extension/                # GNOME Shell extension (ESM / GJS, 45+)
-rust/floresline-launcher/ # Rust + GTK4 port (WIP)
+rust/floresline-launcher/ # Rust + GTK4 launcher (feature-complete)
 packaging/                # Prebuilt .shell-extension.zip
 install.sh / uninstall.sh
 docs/                     # Extra notes (incl. RUST.md)
 ```
 
-## Rust port (WIP)
+## Rust port
 
-A native **Rust + GTK4** rewrite lives under `rust/floresline-launcher/`. It is incomplete; **Python + install.sh remains the supported install path**. See [docs/RUST.md](docs/RUST.md) for deps and `cargo run`.
+A native **Rust + GTK4** rewrite lives under `rust/floresline-launcher/` (feature-complete). `install.sh` installs the release binary when present and keeps Python as `floresline-launcher-python`. See [docs/RUST.md](docs/RUST.md) for deps and `cargo build --release`.
 
 ## Manual extension zip
 

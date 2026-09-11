@@ -9,7 +9,15 @@ EXT_DIR="${HOME}/.local/share/gnome-shell/extensions/${EXT_UUID}"
 
 mkdir -p "$BIN_DIR" "$APP_DIR"
 
-install -m 755 "$ROOT/bin/floresline-launcher" "$BIN_DIR/floresline-launcher"
+RUST_BIN="$ROOT/rust/floresline-launcher/target/release/floresline-launcher"
+if [[ -x "$RUST_BIN" ]]; then
+  install -m 755 "$RUST_BIN" "$BIN_DIR/floresline-launcher"
+  install -m 755 "$ROOT/bin/floresline-launcher" "$BIN_DIR/floresline-launcher-python"
+  echo "Installed Rust launcher (Python fallback: floresline-launcher-python)"
+else
+  install -m 755 "$ROOT/bin/floresline-launcher" "$BIN_DIR/floresline-launcher"
+  echo "Installed Python launcher (build rust/floresline-launcher for native binary)"
+fi
 install -m 755 "$ROOT/bin/floresline-launcher-toggle" "$BIN_DIR/floresline-launcher-toggle"
 
 cat > "$APP_DIR/floresline-launcher.desktop" << DESK
