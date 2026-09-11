@@ -1,0 +1,9 @@
+{
+  "uuid": "floresline-super-launcher@floresline",
+  "name": "Floresline Super Launcher",
+  "description": "Open the Floresline Pop-style app launcher with the Super key (Pop!_OS muscle memory). Super+A still opens the GNOME app grid. Compatible with GNOME 45–50.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "url": "https://github.com/eagle787sf/floresline-gnome-launcher",
+  "version": 1,
+  "gettext-domain": "floresline-super-launcher"
+}

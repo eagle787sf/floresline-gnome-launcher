@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Toggle Floresline launcher (for Super / Super+Space bindings)
+set -euo pipefail
+export DISPLAY="${DISPLAY:-:0}"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}"
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BIN="${FLORESLINE_LAUNCHER:-$ROOT/floresline-launcher}"
+# Prefer installed copy if present
+if [[ -x "$HOME/.local/bin/floresline-launcher" ]]; then
+  BIN="$HOME/.local/bin/floresline-launcher"
+fi
+LOCK="${XDG_RUNTIME_DIR}/floresline-launcher.pid"
+
+if [[ -f "$LOCK" ]]; then
+  old=$(cat "$LOCK" 2>/dev/null || true)
+  if [[ -n "${old:-}" ]] && kill -0 "$old" 2>/dev/null; then
+    kill "$old" 2>/dev/null || true
+    rm -f "$LOCK"
+    exit 0
+  fi
+  rm -f "$LOCK"
+fi
+
+"$BIN" &
+echo $! > "$LOCK"
+(
+  pid=$(cat "$LOCK")
+  while kill -0 "$pid" 2>/dev/null; do sleep 0.5; done
+  rm -f "$LOCK"
+) &
+disown || true

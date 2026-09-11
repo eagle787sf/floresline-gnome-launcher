@@ -1,0 +1,396 @@
+#!/usr/bin/env python3
+"""Pop-style launcher — search entry keeps focus for multi-letter typing."""
+from __future__ import annotations
+
+import atexit
+import os
+import re
+import shlex
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from shutil import which
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Gdk", "4.0")
+gi.require_version("Gio", "2.0")
+from gi.repository import Gtk, Gdk, Gio, GLib, Pango
+
+DESKTOP_DIRS = [
+    Path.home() / ".local/share/applications",
+    Path("/usr/share/applications"),
+    Path("/usr/local/share/applications"),
+    Path.home() / ".local/share/flatpak/exports/share/applications",
+    Path("/var/lib/flatpak/exports/share/applications"),
+    Path("/var/lib/snapd/desktop/applications"),
+]
+
+
+def pidfile() -> Path:
+    return Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/{os.getuid()}")) / "floresline-launcher.pid"
+
+
+@dataclass
+class AppEntry:
+    name: str
+    exec_cmd: str
+    desktop_id: str
+    comment: str
+    keywords: str
+    icon: str
+    terminal: bool
+
+    @property
+    def haystack(self) -> str:
+        return f"{self.name} {self.comment} {self.keywords} {self.desktop_id}".lower()
+
+
+def parse_desktop(path: Path) -> AppEntry | None:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    if "[Desktop Entry]" not in text:
+        return None
+    section: list[str] = []
+    in_entry = False
+    for line in text.splitlines():
+        if line.strip() == "[Desktop Entry]":
+            in_entry = True
+            continue
+        if line.startswith("[") and in_entry:
+            break
+        if in_entry:
+            section.append(line)
+    data: dict[str, str] = {}
+    for line in section:
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        data[k.strip()] = v.strip()
+    if data.get("Type", "Application") != "Application":
+        return None
+    if data.get("NoDisplay", "").lower() == "true":
+        return None
+    if data.get("Hidden", "").lower() == "true":
+        return None
+    name, exec_cmd = data.get("Name"), data.get("Exec")
+    if not name or not exec_cmd:
+        return None
+    exec_cmd = re.sub(r"\s*%[fFuUdDnNickvm]", "", exec_cmd).strip()
+    return AppEntry(
+        name=name,
+        exec_cmd=exec_cmd,
+        desktop_id=path.name,
+        comment=data.get("Comment", ""),
+        keywords=data.get("Keywords", "").replace(";", " "),
+        icon=data.get("Icon", "application-x-executable"),
+        terminal=data.get("Terminal", "false").lower() == "true",
+    )
+
+
+def load_apps() -> list[AppEntry]:
+    seen: set[str] = set()
+    apps: list[AppEntry] = []
+    for d in DESKTOP_DIRS:
+        if not d.is_dir():
+            continue
+        for p in sorted(d.glob("*.desktop")):
+            if p.name in seen:
+                continue
+            entry = parse_desktop(p)
+            if not entry:
+                continue
+            seen.add(p.name)
+            apps.append(entry)
+    apps.sort(key=lambda a: a.name.lower())
+    return apps
+
+
+def fuzzy_score(query: str, app: AppEntry) -> float | None:
+    q = query.strip().lower()
+    if not q:
+        return 0.0
+    name = app.name.lower()
+    h = app.haystack
+    if name.startswith(q):
+        return 1000 - len(name)
+    if q in name:
+        return 800 - name.find(q)
+    if all(tok in h for tok in q.split()):
+        return 500
+    it = iter(h)
+    if all(ch in it for ch in q):
+        return 200 - len(h)
+    return None
+
+
+def launch(app: AppEntry) -> None:
+    if app.terminal:
+        term = which("ptyxis") or which("gnome-terminal")
+        if term and "ptyxis" in term:
+            subprocess.Popen([term, "--", "bash", "-lc", app.exec_cmd], start_new_session=True)
+        elif term:
+            subprocess.Popen([term, "-e", app.exec_cmd], start_new_session=True)
+        else:
+            subprocess.Popen(shlex.split(app.exec_cmd), start_new_session=True)
+        return
+    try:
+        subprocess.Popen(
+            ["gtk-launch", app.desktop_id.removesuffix(".desktop")],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return
+    except OSError:
+        pass
+    subprocess.Popen(
+        shlex.split(app.exec_cmd),
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+class LauncherWindow(Gtk.ApplicationWindow):
+    def __init__(self, app: "LauncherApp"):
+        super().__init__(application=app, title="Launcher")
+        self.app_ref = app
+        self.results: list[AppEntry] = []
+        self._refresh_id = 0
+        self._ignore_changed = False
+
+        self.set_default_size(640, 440)
+        self.set_resizable(False)
+        self.set_decorated(False)
+        self.set_modal(True)
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.set_child(outer)
+
+        self.entry = Gtk.Entry()
+        self.entry.set_placeholder_text("Type to search apps…")
+        self.entry.set_hexpand(True)
+        self.entry.set_can_focus(True)
+        self.entry.connect("changed", self._on_changed)
+        self.entry.connect("activate", lambda *_: self._launch_selected())
+        outer.append(self.entry)
+
+        # Capture arrows/esc on the entry BEFORE they leave the widget
+        keys = Gtk.EventControllerKey()
+        keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        keys.connect("key-pressed", self._on_entry_key)
+        self.entry.add_controller(keys)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_vexpand(True)
+        scrolled.set_min_content_height(320)
+        scrolled.set_can_focus(False)
+        outer.append(scrolled)
+
+        self.list = Gtk.ListBox()
+        self.list.set_selection_mode(Gtk.SelectionMode.BROWSE)
+        self.list.set_can_focus(False)
+        self.list.set_activate_on_single_click(True)
+        self.list.connect("row-activated", lambda *_: self._launch_selected())
+        # Critical: selecting a row must NOT move keyboard focus
+        self.list.connect("row-selected", self._on_row_selected)
+        scrolled.set_child(self.list)
+
+        hint = Gtk.Label(label="Type full words · ↑↓ select · Enter launch · Esc close")
+        hint.add_css_class("dim-label")
+        hint.set_margin_top(6)
+        hint.set_margin_bottom(8)
+        outer.append(hint)
+
+        # If anything steals focus, yank it back to the entry
+        self.connect("notify::is-active", self._ensure_entry_focus)
+        focus_ctrl = Gtk.EventControllerFocus()
+        focus_ctrl.connect("leave", lambda *_: GLib.idle_add(self._focus_entry))
+        self.list.add_controller(focus_ctrl)
+
+        self._rebuild_list("")
+        GLib.timeout_add(50, self._focus_entry)
+
+    def _focus_entry(self, *_args):
+        self.entry.grab_focus()
+        # put caret at end so continued typing works
+        text = self.entry.get_text()
+        self.entry.select_region(len(text), len(text))
+        self.entry.set_position(len(text))
+        return False
+
+    def _ensure_entry_focus(self, *_args):
+        if not self.entry.has_focus():
+            GLib.idle_add(self._focus_entry)
+
+    def _on_row_selected(self, _lb, _row):
+        # Immediately return focus to search after selection highlight changes
+        GLib.idle_add(self._focus_entry)
+
+    def _on_changed(self, entry: Gtk.Entry):
+        if self._ignore_changed:
+            return
+        # Debounce rebuild so rapid typing isn't fighting the list
+        if self._refresh_id:
+            GLib.source_remove(self._refresh_id)
+        q = entry.get_text()
+        self._refresh_id = GLib.timeout_add(40, self._debounced_rebuild, q)
+
+    def _debounced_rebuild(self, q: str):
+        self._refresh_id = 0
+        # Only rebuild if query still matches (user may have typed more)
+        if self.entry.get_text() != q:
+            return False
+        pos = self.entry.get_position()
+        self._rebuild_list(q)
+        # Restore caret — do NOT clear text
+        self._ignore_changed = True
+        self.entry.grab_focus()
+        self.entry.set_position(pos if pos >= 0 else len(q))
+        self._ignore_changed = False
+        return False
+
+    def _rebuild_list(self, query: str):
+        while True:
+            row = self.list.get_row_at_index(0)
+            if row is None:
+                break
+            self.list.remove(row)
+
+        scored: list[tuple[float, AppEntry]] = []
+        for a in self.app_ref.apps:
+            s = fuzzy_score(query, a)
+            if s is not None:
+                scored.append((s, a))
+        scored.sort(key=lambda t: (-t[0], t[1].name.lower()))
+        self.results = [a for _, a in scored[:50]]
+
+        for a in self.results:
+            row = Gtk.ListBoxRow()
+            row.set_can_focus(False)
+            row.set_focusable(False)
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            for m in (10, 10, 6, 6):
+                pass
+            box.set_margin_start(10)
+            box.set_margin_end(10)
+            box.set_margin_top(6)
+            box.set_margin_bottom(6)
+            icon = Gtk.Image.new_from_icon_name(a.icon if not a.icon.startswith("/") else "application-x-executable")
+            icon.set_pixel_size(28)
+            if a.icon.startswith("/") and Path(a.icon).is_file():
+                icon.set_from_file(a.icon)
+            box.append(icon)
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            name = Gtk.Label(label=a.name, xalign=0)
+            name.add_css_class("title")
+            col.append(name)
+            if a.comment:
+                c = Gtk.Label(label=a.comment, xalign=0)
+                c.add_css_class("dim-label")
+                c.set_ellipsize(Pango.EllipsizeMode.END)
+                col.append(c)
+            box.append(col)
+            row.set_child(box)
+            self.list.append(row)
+
+        if self.results:
+            # Select without focusing
+            self.list.select_row(self.list.get_row_at_index(0))
+
+    def _move_sel(self, delta: int) -> bool:
+        if not self.results:
+            return True
+        row = self.list.get_selected_row()
+        idx = row.get_index() if row else 0
+        nxt = max(0, min(len(self.results) - 1, idx + delta))
+        r = self.list.get_row_at_index(nxt)
+        if r:
+            self.list.select_row(r)
+        GLib.idle_add(self._focus_entry)
+        return True
+
+    def _launch_selected(self):
+        row = self.list.get_selected_row()
+        idx = row.get_index() if row else 0
+        if 0 <= idx < len(self.results):
+            launch(self.results[idx])
+            self.app_ref.quit()
+
+    def _on_entry_key(self, _c, keyval, _code, _state):
+        if keyval == Gdk.KEY_Escape:
+            self.app_ref.quit()
+            return True
+        if keyval in (Gdk.KEY_Down, Gdk.KEY_KP_Down, Gdk.KEY_Tab):
+            return self._move_sel(1)
+        if keyval in (Gdk.KEY_Up, Gdk.KEY_KP_Up, Gdk.KEY_ISO_Left_Tab):
+            return self._move_sel(-1)
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            self._launch_selected()
+            return True
+        # IMPORTANT: return False so letters reach the Gtk.Entry
+        return False
+
+
+class LauncherApp(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="dev.floresline.Launcher")
+        self.win = None
+        self.apps: list[AppEntry] = []
+
+    def do_activate(self):
+        if self.win:
+            self.win.present()
+            self.win._focus_entry()
+            return
+        self.apps = load_apps()
+        self.win = LauncherWindow(self)
+        self._css()
+        self.win.present()
+
+    def _css(self):
+        css = Gtk.CssProvider()
+        css.load_from_data(
+            b"""
+            window {
+              background-color: rgba(15, 31, 20, 0.96);
+              color: #e8ffe8;
+              border-radius: 16px;
+              border: 1px solid rgba(124, 191, 58, 0.45);
+            }
+            entry {
+              margin: 14px 14px 8px 14px;
+              padding: 12px 14px;
+              font-size: 16px;
+              border-radius: 10px;
+              background: rgba(0, 0, 0, 0.35);
+              color: #f0fff0;
+              caret-color: #7cbf3a;
+            }
+            list { background: transparent; margin: 0 8px 4px 8px; }
+            row { border-radius: 8px; margin: 2px 4px; }
+            row:selected { background: rgba(124, 191, 58, 0.28); }
+            .title { font-weight: 600; }
+            .dim-label { opacity: 0.65; font-size: 12px; margin: 4px 14px; }
+            """
+        )
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+
+def main() -> int:
+    pf = pidfile()
+    pf.write_text(str(os.getpid()))
+    atexit.register(lambda: pf.unlink(missing_ok=True))
+    return LauncherApp().run(sys.argv)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
