@@ -10,17 +10,18 @@ Inspired by [Pop Launcher Super-Key](https://extensions.gnome.org/extension/4797
 ## Features
 
 - **Fuzzy search** across `.desktop` apps (system, Flatpak, Snap, `~/.local`)
-- **Recents boost** — frequently/recently launched apps rise to the top (empty query prefers them)
-- **Calculator**: type `= 2+2` → Enter copies the result (`gnome-calculator -s` when installed; else built-in meval/`bc`)
-- **Web search**: `? query`, `ddg …`, `google …`, `gs …` (opens in browser); bare `https://…` opens directly
+- **Pop-style prefixes** for calculator, web search, and optional extras
+- **Calculator**: type `=` then an expression (e.g. `=2+2`). Bare `=` shows a hint. **Enter** copies the result (notification). Live preview uses fast built-in math; **GNOME Calculator** is used on Enter when available
+- **Web search**: `? query`, `ddg …`, `google …`, `gs …` (opens in the browser); bare `https://…` URLs open directly
+- **Recents** — frequently/recently launched apps rise to the top (empty query prefers them)
 - **Alt+1…9** launch the nth visible result (number badges on the first 9 rows)
 - **Search field keeps focus** while you type multi-letter queries
 - **Keyboard nav**: `↑` `↓` select · `Enter` launch · `Esc` close
 - **Pop-like shortcuts**: `Super+Space`, `Super+/`
-- **Optional Super-key extension**: Super alone opens the launcher (`Super+A` still opens the app grid)
+- **Optional Super-key extension** (GJS): Super alone opens the launcher (`Super+A` still opens the app grid). **Log out and back in** once after install (Wayland)
 - **No root** required for install
 - GTK4 · Wayland-friendly
-- Optional personal commands: `~/.config/floresline-launcher/extras.toml` (`[[commands]]` with `prefix` / `label` / `exec`; missing file = no-op)
+- Optional extras: `~/.config/floresline-launcher/extras.toml`
 
 ## Requirements
 
@@ -29,8 +30,8 @@ Inspired by [Pop Launcher Super-Key](https://extensions.gnome.org/extension/4797
 | Desktop | GNOME Shell **45–50** (tested on **50.1** / Ubuntu) |
 | Session | Wayland or X11 |
 | Runtime | Rust + GTK4 binary (preferred when built) or Python 3.10+ / PyGObject |
-| Calculator | `gnome-calculator` recommended (`sudo apt install -y gnome-calculator`); meval/`bc` fallback |
-| Super-key bind | Log out/in once after installing the extension (Wayland) |
+| Calculator | Live preview: built-in math. Enter: `gnome-calculator` when installed (`sudo apt install -y gnome-calculator`) |
+| Super-key bind | Log out/in once after installing the GJS extension (Wayland) |
 
 ## Quick install
 
@@ -39,6 +40,8 @@ git clone https://github.com/eagle787sf/floresline-gnome-launcher.git
 cd floresline-gnome-launcher
 ./install.sh
 ```
+
+`install.sh` installs the **Rust release binary** when it has been built (`rust/floresline-launcher/target/release/floresline-launcher`) and keeps Python as `floresline-launcher-python`. See [docs/RUST.md](docs/RUST.md) for deps and `cargo build --release`.
 
 Then **log out and back in** (needed for the Super-key extension on Wayland).
 
@@ -54,15 +57,16 @@ floresline-launcher-toggle
 
 | Shortcut | Action |
 |----------|--------|
-| `Super` | Launcher *(after logout/in with extension)* |
+| `Super` | Launcher *(after logout/in with the GJS extension)* |
 | `Super` + `Space` | Launcher |
 | `Super` + `/` | Launcher |
 | `Super` + `A` | GNOME app grid |
 | `↑` `↓` | Move selection |
 | `Enter` | Launch / copy calc / open search |
 | `Alt` + `1`…`9` | Launch nth result |
-| `=` expr | Calculator (Enter copies result) |
+| `=` expr | Calculator (`=2+2`; bare `=` shows a hint; Enter copies) |
 | `?` / `ddg` / `gs` / `google` | Web search |
+| `https://…` | Open URL |
 | `Esc` | Close |
 
 > **Keychron / Mac-layout boards:** set the hardware switch to **Windows** on Linux so Super is the Win key. See [docs/KEYCHRON.md](docs/KEYCHRON.md).
@@ -88,8 +92,8 @@ Log out/in to unload the extension.
 
 ```
 bin/                      # Python launcher fallback + toggle scripts
-extension/                # GNOME Shell extension (ESM / GJS, 45+)
-rust/floresline-launcher/ # Rust + GTK4 launcher (feature-complete)
+extension/                # GNOME Shell Super-key extension (ESM / GJS, 45+)
+rust/floresline-launcher/ # Rust + GTK4 launcher (v0.2.4)
 packaging/                # Prebuilt .shell-extension.zip
 install.sh / uninstall.sh
 docs/                     # Extra notes (incl. RUST.md)
@@ -97,7 +101,7 @@ docs/                     # Extra notes (incl. RUST.md)
 
 ## Rust port
 
-A native **Rust + GTK4** rewrite lives under `rust/floresline-launcher/` (feature-complete). `install.sh` installs the release binary when present and keeps Python as `floresline-launcher-python`. See [docs/RUST.md](docs/RUST.md) for deps and `cargo build --release`.
+A native **Rust + GTK4** rewrite lives under `rust/floresline-launcher/` (v0.2.4). `install.sh` prefers the release binary when present and keeps Python as `floresline-launcher-python`. See [docs/RUST.md](docs/RUST.md) for deps, calculator backends, and `cargo build --release`.
 
 ## Manual extension zip
 
@@ -111,7 +115,7 @@ gnome-extensions install -f packaging/floresline-super-launcher@floresline.shell
 | Symptom | Fix |
 |---------|-----|
 | Super still opens Activities | Log out/in; confirm extension enabled in *Extensions* |
-| Can’t type more than one letter | Update to latest `bin/floresline-launcher` (focus fix) |
+| Can’t type more than one letter | Update to latest launcher (focus fix) |
 | `Super+Space` switches keyboard layout | Install script remaps input-source off Super+Space |
 | Extension “doesn’t exist” in CLI until reboot | Normal on Wayland until new session |
 | No apps listed | Ensure `.desktop` files exist under `/usr/share/applications` or Flatpak exports |
@@ -121,7 +125,7 @@ gnome-extensions install -f packaging/floresline-super-launcher@floresline.shell
 [extensions.gnome.org #4797](https://extensions.gnome.org/extension/4797/pop-launcher-super-key/) binds **Pop Launcher** to Super and is largely unmaintained for GNOME 45+. This repo provides:
 
 1. A self-contained GTK4 launcher (no Pop packages)
-2. A small Super-key extension for GNOME **45–50**
+2. A small Super-key GJS extension for GNOME **45–50**
 
 ## License
 

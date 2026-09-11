@@ -2,7 +2,7 @@
 
 Native Rust rewrite of the Floresline launcher using [GTK4](https://www.gtk.org/) via [gtk-rs](https://gtk-rs.org/gtk4-rs/stable/latest/book/).
 
-**Status:** v0.2.3 — desktop scan, fuzzy ranking + recents boost, `=` calculator, web prefixes (`?`/`ddg`/`gs`/`google` + bare URLs), Alt+1–9 badges, focus UX, CSS theme, pidfile. `install.sh` prefers `rust/floresline-launcher/target/release/floresline-launcher` when present and keeps the Python script as `floresline-launcher-python`.
+**Status:** v0.2.4 — desktop scan, fuzzy ranking + recents boost, `=` calculator (meval live preview; gnome-calculator on Enter), web prefixes (`?`/`ddg`/`gs`/`google` + bare URLs), Alt+1–9 badges, focus UX, CSS theme, pidfile. `install.sh` prefers `rust/floresline-launcher/target/release/floresline-launcher` when present and keeps the Python script as `floresline-launcher-python`.
 
 The GNOME Shell Super-key extension stays **GJS** (`extension/`); it is not part of this crate. Repo `bin/floresline-launcher` remains the Python fallback.
 
@@ -42,10 +42,10 @@ If `cargo check` fails with missing `gtk4` / `gtk-4.0` pkg-config errors, instal
 
 ```
 rust/floresline-launcher/
-  Cargo.toml          # v0.2.3; gtk4 → `gtk` v4_12; shlex, meval, serde_json, urlencoding, toml
+  Cargo.toml          # v0.2.4; gtk4 → `gtk` v4_12; shlex, meval, serde_json, urlencoding, toml
   src/
     main.rs           # GtkApplication UI: prefixes, Alt+1-9, hint bar
-    calc.rs           # `=` calculator (gnome-calculator -s, meval/bc fallback)
+    calc.rs           # `=` calculator (meval live preview; gnome-calculator on Enter)
     desktop.rs        # parse/load .desktop dirs (same filters as Python)
     fuzzy.rs          # score / rank + recents bonus
     launch.rs         # terminal / gtk-launch / shlex Exec / xdg-open / clipboard helpers
@@ -53,21 +53,15 @@ rust/floresline-launcher/
     extras.rs         # optional ~/.config/floresline-launcher/extras.toml
 ```
 
-## Calculator (GNOME-native)
+## Calculator (v0.2.4)
 
-Type `= 2+2` (space optional; fullwidth `＝` also works). The result row shows the
-**expression** as the title and the **value** as a dim subtitle. Enter copies the
-result via the GTK clipboard (and `wl-copy`/`xclip` when present) and runs
-`notify-send "Copied to clipboard"`.
+Type `=` then an expression (space optional; fullwidth `＝` also works), e.g. `=2+2`. Bare `=` shows a hint row.
 
-Evaluation order:
-
-1. `gnome-calculator -s` / `--solve` when installed (GNOME’s calc CLI)
-2. Built-in `meval` (offline arithmetic)
-3. `bc -l` if available
+- **Live preview** (every keystroke): fast built-in `meval`, then `bc` if needed. Never calls gnome-calculator while typing (that CLI would freeze the GTK main thread).
+- **Enter**: copies the result (GTK clipboard + `wl-copy`/`xclip` when present) and shows a notification. When `gnome-calculator` is installed, Enter re-solves with `gnome-calculator -s` **off the main thread**.
 
 ```bash
-# Recommended for Pop/cosmic-like unit-aware calc parity on GNOME:
+# Recommended for GNOME unit-aware solve on Enter:
 sudo apt install -y gnome-calculator
 # optional Wayland clipboard helper (GTK clipboard is primary):
 # sudo apt install -y wl-clipboard
