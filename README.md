@@ -93,7 +93,7 @@ Log out/in to unload the extension.
 ```
 bin/                      # Python launcher fallback + toggle scripts
 extension/                # GNOME Shell Super-key extension (ESM / GJS, 45+)
-rust/floresline-launcher/ # Rust + GTK4 launcher (v0.2.4)
+rust/floresline-launcher/ # Rust + GTK4 launcher (v0.2.5)
 packaging/                # Prebuilt .shell-extension.zip
 install.sh / uninstall.sh
 docs/                     # Extra notes (incl. RUST.md)
@@ -101,7 +101,7 @@ docs/                     # Extra notes (incl. RUST.md)
 
 ## Rust port
 
-A native **Rust + GTK4** rewrite lives under `rust/floresline-launcher/` (v0.2.4). `install.sh` prefers the release binary when present and keeps Python as `floresline-launcher-python`. See [docs/RUST.md](docs/RUST.md) for deps, calculator backends, and `cargo build --release`.
+A native **Rust + GTK4** rewrite lives under `rust/floresline-launcher/` (v0.2.5). `install.sh` prefers the release binary when present and keeps Python as `floresline-launcher-python`. See [docs/RUST.md](docs/RUST.md) for deps, calculator backends, and `cargo build --release`.
 
 ## Manual extension zip
 

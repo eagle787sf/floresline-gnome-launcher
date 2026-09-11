@@ -83,10 +83,12 @@ fn format_meval(v: f64) -> String {
 }
 
 /// Spawn `gnome-calculator -s` with a busy-wait timeout. Call off the GTK main thread.
+#[cfg(test)]
 pub fn eval_gnome_calculator(expr: &str) -> Result<String, String> {
     eval_gnome_calculator_timeout(expr, Duration::from_secs(3))
 }
 
+#[cfg(test)]
 fn eval_gnome_calculator_timeout(expr: &str, timeout: Duration) -> Result<String, String> {
     let bin = which("gnome-calculator").ok_or_else(|| "gnome-calculator not found".to_string())?;
     let mut child = Command::new(bin)
@@ -192,11 +194,7 @@ fn eval_live(expr: &str) -> Result<(String, &'static str), String> {
 pub fn parse_calc(query: &str) -> Option<CalcRow> {
     let expr = strip_calc_prefix(query)?;
     if expr.is_empty() {
-        let subtitle = if has_gnome_calculator() {
-            "e.g. 2+2 · Enter copies result".to_string()
-        } else {
-            "e.g. 2+2 · install gnome-calculator for GNOME solve".to_string()
-        };
+        let subtitle = "e.g. 2+2 · Enter copies result".to_string();
         debug_log(query, "hint");
         return Some(CalcRow {
             title: "= type expression".to_string(),
