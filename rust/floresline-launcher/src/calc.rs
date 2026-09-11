@@ -1,5 +1,12 @@
-//! Calculator prefix (`=` / `＝`) — GNOME-native via gnome-calculator, with meval/bc fallbacks.
+//! Calculator prefix (`=` / `＝`) — live preview via meval/`bc`; gnome-calculator on Enter only.
+//!
+//! Why gnome-calculator is not used per-keystroke: `gnome-calculator -s` is a process
+//! spawn + busy-wait (up to ~3s). `parse_calc` runs from `rebuild_list` on every calc
+//! keystroke on the GTK main thread, so calling it there freezes typing even though the
+//! same CLI works fine in a terminal. Live UI uses meval (then `bc`); Enter may re-solve
+//! with gnome-calculator off the main thread.
 
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
@@ -27,7 +34,8 @@ fn which(cmd: &str) -> Option<PathBuf> {
     None
 }
 
-fn has_gnome_calculator() -> bool {
+/// True when `gnome-calculator` is on PATH (cached).
+pub fn has_gnome_calculator() -> bool {
     static CACHED: OnceLock<bool> = OnceLock::new();
     *CACHED.get_or_init(|| which("gnome-calculator").is_some())
 }
@@ -35,6 +43,17 @@ fn has_gnome_calculator() -> bool {
 fn has_bc() -> bool {
     static CACHED: OnceLock<bool> = OnceLock::new();
     *CACHED.get_or_init(|| which("bc").is_some())
+}
+
+fn debug_log(query: &str, backend: &str) {
+    if std::env::var_os("FLORESLINE_DEBUG").is_none() {
+        return;
+    }
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/floresline-calc.log")
+        .and_then(|mut f| writeln!(f, "query={query:?} backend={backend}"));
 }
 
 /// Strip `=` / `＝` prefix (space optional). Returns `None` if not a calc query.
@@ -63,7 +82,12 @@ fn format_meval(v: f64) -> String {
     }
 }
 
-fn eval_gnome_calculator(expr: &str) -> Result<String, String> {
+/// Spawn `gnome-calculator -s` with a busy-wait timeout. Call off the GTK main thread.
+pub fn eval_gnome_calculator(expr: &str) -> Result<String, String> {
+    eval_gnome_calculator_timeout(expr, Duration::from_secs(3))
+}
+
+fn eval_gnome_calculator_timeout(expr: &str, timeout: Duration) -> Result<String, String> {
     let bin = which("gnome-calculator").ok_or_else(|| "gnome-calculator not found".to_string())?;
     let mut child = Command::new(bin)
         .args(["-s", expr])
@@ -72,12 +96,11 @@ fn eval_gnome_calculator(expr: &str) -> Result<String, String> {
         .spawn()
         .map_err(|e| e.to_string())?;
 
-    // Avoid hanging the UI if the CLI misbehaves.
     let started = std::time::Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
-            Ok(None) if started.elapsed() > Duration::from_secs(3) => {
+            Ok(None) if started.elapsed() > timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err("gnome-calculator timed out".into());
@@ -99,7 +122,6 @@ fn eval_gnome_calculator(expr: &str) -> Result<String, String> {
     let hint = if !stdout.is_empty() {
         stdout
     } else if !stderr.is_empty() {
-        // Keep one short line; strip glib CRITICAL noise.
         stderr
             .lines()
             .find(|l| l.to_lowercase().contains("error") || !l.starts_with("**"))
@@ -120,7 +142,6 @@ fn eval_meval(expr: &str) -> Result<String, ()> {
 
 fn eval_bc(expr: &str) -> Result<String, String> {
     let bin = which("bc").ok_or_else(|| "bc not found".to_string())?;
-    // Prefer floating results when the expression looks non-integer.
     let script = format!("scale=9; {expr}\n");
     let output = Command::new(bin)
         .arg("-l")
@@ -129,7 +150,6 @@ fn eval_bc(expr: &str) -> Result<String, String> {
         .stderr(Stdio::piped())
         .spawn()
         .and_then(|mut child| {
-            use std::io::Write;
             if let Some(mut stdin) = child.stdin.take() {
                 stdin.write_all(script.as_bytes())?;
             }
@@ -140,7 +160,6 @@ fn eval_bc(expr: &str) -> Result<String, String> {
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if output.status.success() && !stdout.is_empty() && stderr.is_empty() {
-        // Normalize trailing zeros from scale=9 when integer-ish.
         if let Ok(v) = stdout.parse::<f64>() {
             return Ok(format_meval(v));
         }
@@ -153,25 +172,8 @@ fn eval_bc(expr: &str) -> Result<String, String> {
     })
 }
 
-fn eval_expression(expr: &str) -> Result<(String, &'static str), String> {
-    if has_gnome_calculator() {
-        match eval_gnome_calculator(expr) {
-            Ok(v) => return Ok((v, "gnome-calculator")),
-            Err(e) => {
-                // Fall through to meval/bc for simple arithmetic when g-c rejects.
-                if let Ok(v) = eval_meval(expr) {
-                    return Ok((v, "meval"));
-                }
-                if has_bc() {
-                    if let Ok(v) = eval_bc(expr) {
-                        return Ok((v, "bc"));
-                    }
-                }
-                return Err(e);
-            }
-        }
-    }
-
+/// Fast live-preview backends only — never spawns gnome-calculator.
+fn eval_live(expr: &str) -> Result<(String, &'static str), String> {
     if let Ok(v) = eval_meval(expr) {
         return Ok((v, "meval"));
     }
@@ -183,8 +185,9 @@ fn eval_expression(expr: &str) -> Result<(String, &'static str), String> {
     Err("invalid expression".into())
 }
 
-/// Parse `=` / `＝` calculator prefix into a list row.
+/// Parse `=` / `＝` calculator prefix into a list row (live / rebuild path).
 ///
+/// Uses meval then `bc` only — never gnome-calculator (see module docs).
 /// Returns `None` if the query is not a calc prefix.
 pub fn parse_calc(query: &str) -> Option<CalcRow> {
     let expr = strip_calc_prefix(query)?;
@@ -194,6 +197,7 @@ pub fn parse_calc(query: &str) -> Option<CalcRow> {
         } else {
             "e.g. 2+2 · install gnome-calculator for GNOME solve".to_string()
         };
+        debug_log(query, "hint");
         return Some(CalcRow {
             title: "= type expression".to_string(),
             subtitle,
@@ -201,14 +205,12 @@ pub fn parse_calc(query: &str) -> Option<CalcRow> {
         });
     }
 
-    match eval_expression(expr) {
+    match eval_live(expr) {
         Ok((result, backend)) => {
-            let subtitle = if backend == "gnome-calculator" {
-                result.clone()
-            } else if has_gnome_calculator() {
+            debug_log(query, backend);
+            let subtitle = if has_gnome_calculator() {
                 result.clone()
             } else {
-                // Offline / meval path — note GNOME preferred backend.
                 format!("{result}  ·  uses built-in (apt install gnome-calculator)")
             };
             Some(CalcRow {
@@ -218,6 +220,7 @@ pub fn parse_calc(query: &str) -> Option<CalcRow> {
             })
         }
         Err(err) => {
+            debug_log(query, "invalid");
             let short = err.lines().next().unwrap_or("invalid expression");
             let short = if short.len() > 80 {
                 format!("{}…", &short[..77])
@@ -294,12 +297,19 @@ mod tests {
     }
 
     #[test]
+    fn live_preview_does_not_require_gnome() {
+        // meval path must work regardless of gnome-calculator.
+        let row = parse_calc("=10/2").unwrap();
+        assert_eq!(row.result.as_deref(), Some("5"));
+        assert_eq!(row.title, "10/2");
+    }
+
+    #[test]
     fn gnome_calculator_solve_when_present() {
         if !has_gnome_calculator() {
             return;
         }
-        let row = parse_calc("=10/2").unwrap();
-        assert_eq!(row.result.as_deref(), Some("5"));
-        assert_eq!(row.title, "10/2");
+        let v = eval_gnome_calculator("10/2").expect("gnome-calculator -s");
+        assert_eq!(v.trim(), "5");
     }
 }

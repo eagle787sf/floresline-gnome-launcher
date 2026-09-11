@@ -11,7 +11,8 @@ use std::cell::{Cell, RefCell};
 use std::fs;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use gtk::gdk::{Display, Key, ModifierType};
 use gtk::glib::{self, ControlFlow};
@@ -351,12 +352,31 @@ fn move_sel(list: &ListBox, state: &UiState, entry: &Entry, delta: i32) -> bool 
     true
 }
 
-fn activate_index(
+fn finish_calc_copy(
     list: &ListBox,
     state: &UiState,
     app: &Application,
     entry: &Entry,
     apps: &[desktop::AppEntry],
+    result: &str,
+) {
+    state.ignore_changed.set(true);
+    entry.set_text(result);
+    state.ignore_changed.set(false);
+    rebuild_list(list, apps, &format!("={result}"), state);
+    // GNOME-native GTK clipboard first; wl-copy / xclip optional helpers.
+    copy_to_clipboard(result);
+    let _ = launch::notify_send("Copied to clipboard", "");
+    // Stay open long enough for notify-send + clipboard clients on Wayland.
+    quit_after(app, 900);
+}
+
+fn activate_index(
+    list: &ListBox,
+    state: &Rc<UiState>,
+    app: &Application,
+    entry: &Entry,
+    apps: &Rc<Vec<desktop::AppEntry>>,
     idx: usize,
 ) {
     let item = {
@@ -374,23 +394,60 @@ fn activate_index(
             }
             quit_soon(app);
         }
-        ResultItem::Calc { result, .. } => {
-            let Some(result) = result else {
+        ResultItem::Calc { title, result, .. } => {
+            let Some(preview) = result else {
                 // Hint / invalid expression row — no-op on Enter.
                 return;
             };
-            // Show the answer in the entry and calc row before quitting so
-            // Enter feels successful even when clipboard helpers are missing.
+            let expr = title;
+
+            // Instant feedback from live preview (meval/bc). Optional GNOME
+            // re-solve runs off the main thread so Enter never blocks like typing did.
             state.ignore_changed.set(true);
-            entry.set_text(&result);
+            entry.set_text(&preview);
             state.ignore_changed.set(false);
-            let calc_q = format!("={result}");
-            rebuild_list(list, apps, &calc_q, state);
-            // GNOME-native GTK clipboard first; wl-copy / xclip optional helpers.
-            copy_to_clipboard(&result);
-            let _ = launch::notify_send("Copied to clipboard", "");
-            // Stay open long enough for notify-send + clipboard clients on Wayland.
-            quit_after(app, 900);
+            rebuild_list(list, apps, &format!("={preview}"), state);
+
+            if !calc::has_gnome_calculator() {
+                copy_to_clipboard(&preview);
+                let _ = launch::notify_send("Copied to clipboard", "");
+                quit_after(app, 900);
+                return;
+            }
+
+            let slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+            let slot_t = Arc::clone(&slot);
+            let preview_t = preview.clone();
+            std::thread::spawn(move || {
+                let v = match calc::eval_gnome_calculator(&expr) {
+                    Ok(v) => v,
+                    Err(_) => preview_t,
+                };
+                if let Ok(mut g) = slot_t.lock() {
+                    *g = Some(v);
+                }
+            });
+
+            let list = list.clone();
+            let entry = entry.clone();
+            let app = app.clone();
+            let state = Rc::clone(state);
+            let apps = Rc::clone(apps);
+            let preview_fb = preview;
+            let start = Instant::now();
+            glib::timeout_add_local(Duration::from_millis(25), move || {
+                let got = slot.lock().ok().and_then(|g| g.clone());
+                if let Some(final_r) = got {
+                    finish_calc_copy(&list, &state, &app, &entry, &apps, &final_r);
+                    return ControlFlow::Break;
+                }
+                // If GNOME is slow, copy the already-shown meval/bc preview.
+                if start.elapsed() > Duration::from_millis(750) {
+                    finish_calc_copy(&list, &state, &app, &entry, &apps, &preview_fb);
+                    return ControlFlow::Break;
+                }
+                ControlFlow::Continue
+            });
         }
         ResultItem::Web { url, .. } => {
             if let Err(e) = launch::open_uri(&url) {
@@ -410,10 +467,10 @@ fn activate_index(
 
 fn launch_selected(
     list: &ListBox,
-    state: &UiState,
+    state: &Rc<UiState>,
     app: &Application,
     entry: &Entry,
-    apps: &[desktop::AppEntry],
+    apps: &Rc<Vec<desktop::AppEntry>>,
 ) {
     let idx = list.selected_row().map(|r| r.index()).unwrap_or(0) as usize;
     activate_index(list, state, app, entry, apps, idx);
