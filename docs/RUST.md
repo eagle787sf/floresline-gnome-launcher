@@ -2,7 +2,7 @@
 
 Native Rust rewrite of the Floresline launcher using [GTK4](https://www.gtk.org/) via [gtk-rs](https://gtk-rs.org/gtk4-rs/stable/latest/book/).
 
-**Status:** feature-complete — `cargo build --release` produces a working binary with desktop scan, fuzzy ranking, launch, focus UX, CSS theme, and pidfile parity with Python. `install.sh` prefers `rust/floresline-launcher/target/release/floresline-launcher` when present and keeps the Python script as `floresline-launcher-python`.
+**Status:** v0.2.0 — desktop scan, fuzzy ranking + recents boost, `=` calculator, web prefixes (`?`/`ddg`/`gs`/`google` + bare URLs), Alt+1–9 badges, focus UX, CSS theme, pidfile. `install.sh` prefers `rust/floresline-launcher/target/release/floresline-launcher` when present and keeps the Python script as `floresline-launcher-python`.
 
 The GNOME Shell Super-key extension stays **GJS** (`extension/`); it is not part of this crate. Repo `bin/floresline-launcher` remains the Python fallback.
 
@@ -42,12 +42,14 @@ If `cargo check` fails with missing `gtk4` / `gtk-4.0` pkg-config errors, instal
 
 ```
 rust/floresline-launcher/
-  Cargo.toml          # package `floresline-launcher`; gtk4 → `gtk`, feature `v4_12`; shlex
+  Cargo.toml          # v0.2.0; gtk4 → `gtk` v4_12; shlex, meval, serde_json, urlencoding, toml
   src/
-    main.rs           # GtkApplication `dev.floresline.Launcher`, full UI
+    main.rs           # GtkApplication UI: prefixes, Alt+1-9, hint bar
     desktop.rs        # parse/load .desktop dirs (same filters as Python)
-    fuzzy.rs          # score / rank (same algorithm as Python)
-    launch.rs         # terminal / gtk-launch / shlex Exec
+    fuzzy.rs          # score / rank + recents bonus
+    launch.rs         # terminal / gtk-launch / shlex Exec / xdg-open
+    recents.rs        # $XDG_STATE_HOME/floresline-launcher/recents.json
+    extras.rs         # optional ~/.config/floresline-launcher/extras.toml
 ```
 
 Bump the `gtk` crate version and/or feature flag (e.g. `v4_14`) in `Cargo.toml` when you need newer GTK APIs. See the gtk-rs book for feature ↔ GTK version mapping.

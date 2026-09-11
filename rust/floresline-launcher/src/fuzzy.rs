@@ -1,6 +1,7 @@
-//! Fuzzy matching / ranking — same algorithm as Python `fuzzy_score`.
+//! Fuzzy matching / ranking — same algorithm as Python `fuzzy_score`, plus recents boost.
 
 use crate::desktop::AppEntry;
+use crate::recents::Recents;
 
 /// Score how well `query` matches `app`. Higher is better; `None` = no match.
 pub fn score(query: &str, app: &AppEntry) -> Option<i32> {
@@ -21,7 +22,7 @@ pub fn score(query: &str, app: &AppEntry) -> Option<i32> {
     if q.split_whitespace().all(|tok| h.contains(tok)) {
         return Some(500);
     }
-    // subsequence: every char of q appears in order in h (Python `all(ch in it for ch in q)`)
+    // subsequence: every char of q appears in order in h
     let mut it = h.chars();
     if q.chars().all(|ch| it.any(|c| c == ch)) {
         return Some(200 - h.len() as i32);
@@ -29,11 +30,17 @@ pub fn score(query: &str, app: &AppEntry) -> Option<i32> {
     None
 }
 
-/// Filter and sort apps by fuzzy score (descending), then name.
-pub fn rank(query: &str, apps: &[AppEntry]) -> Vec<(i32, AppEntry)> {
+/// Filter and sort apps by fuzzy score + recents bonus (descending), then name.
+/// Empty query prefers recents at the top.
+pub fn rank(query: &str, apps: &[AppEntry], recents: &Recents) -> Vec<(i32, AppEntry)> {
     let mut scored: Vec<(i32, AppEntry)> = apps
         .iter()
-        .filter_map(|app| score(query, app).map(|s| (s, app.clone())))
+        .filter_map(|app| {
+            score(query, app).map(|s| {
+                let bonus = recents.bonus(&app.desktop_id);
+                (s + bonus, app.clone())
+            })
+        })
         .collect();
     scored.sort_by(|a, b| {
         b.0.cmp(&a.0)

@@ -10,12 +10,17 @@ Inspired by [Pop Launcher Super-Key](https://extensions.gnome.org/extension/4797
 ## Features
 
 - **Fuzzy search** across `.desktop` apps (system, Flatpak, Snap, `~/.local`)
+- **Recents boost** — frequently/recently launched apps rise to the top (empty query prefers them)
+- **Calculator**: type `= 2+2` → Enter copies the result to the clipboard
+- **Web search**: `? query`, `ddg …`, `google …`, `gs …` (opens in browser); bare `https://…` opens directly
+- **Alt+1…9** launch the nth visible result (number badges on the first 9 rows)
 - **Search field keeps focus** while you type multi-letter queries
 - **Keyboard nav**: `↑` `↓` select · `Enter` launch · `Esc` close
 - **Pop-like shortcuts**: `Super+Space`, `Super+/`
 - **Optional Super-key extension**: Super alone opens the launcher (`Super+A` still opens the app grid)
 - **No root** required for install
 - GTK4 · Wayland-friendly
+- Optional personal commands: `~/.config/floresline-launcher/extras.toml` (`[[commands]]` with `prefix` / `label` / `exec`; missing file = no-op)
 
 ## Requirements
 
@@ -53,7 +58,10 @@ floresline-launcher-toggle
 | `Super` + `/` | Launcher |
 | `Super` + `A` | GNOME app grid |
 | `↑` `↓` | Move selection |
-| `Enter` | Launch |
+| `Enter` | Launch / copy calc / open search |
+| `Alt` + `1`…`9` | Launch nth result |
+| `=` expr | Calculator (Enter copies result) |
+| `?` / `ddg` / `gs` / `google` | Web search |
 | `Esc` | Close |
 
 > **Keychron / Mac-layout boards:** set the hardware switch to **Windows** on Linux so Super is the Win key. See [docs/KEYCHRON.md](docs/KEYCHRON.md).

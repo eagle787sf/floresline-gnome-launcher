@@ -66,3 +66,17 @@ pub fn launch_app(app: &AppEntry) -> Result<(), String> {
     c.args(&argv[1..]);
     spawn_detached(c)
 }
+
+/// Open a URL (or any URI) with `xdg-open`.
+pub fn open_uri(uri: &str) -> Result<(), String> {
+    let mut c = Command::new("xdg-open");
+    c.arg(uri);
+    spawn_detached(c)
+}
+
+/// Run a shell command detached (`sh -lc`), for optional extras.toml entries.
+pub fn run_shell(cmd: &str) -> Result<(), String> {
+    let mut c = Command::new("sh");
+    c.args(["-lc", cmd]);
+    spawn_detached(c)
+}

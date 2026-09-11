@@ -1,8 +1,10 @@
-//! Floresline GNOME launcher — Rust + GTK4 (feature-parity with Python).
+//! Floresline GNOME launcher — Rust + GTK4 (Pop-style prefixes + recents).
 
 mod desktop;
+mod extras;
 mod fuzzy;
 mod launch;
+mod recents;
 
 use std::cell::{Cell, RefCell};
 use std::fs;
@@ -10,7 +12,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
-use gtk::gdk::{Display, Key};
+use gtk::gdk::{Display, Key, ModifierType};
 use gtk::glib::{self, ControlFlow};
 use gtk::pango;
 use gtk::prelude::*;
@@ -43,6 +45,12 @@ row { border-radius: 8px; margin: 2px 4px; }
 row:selected { background: rgba(124, 191, 58, 0.28); }
 .title { font-weight: 600; }
 .dim-label { opacity: 0.65; font-size: 12px; margin: 4px 14px; }
+.hotkey-badge {
+  opacity: 0.45;
+  font-size: 11px;
+  font-weight: 600;
+  min-width: 14px;
+}
 "#;
 
 fn pidfile_path() -> PathBuf {
@@ -81,10 +89,21 @@ impl Drop for PidGuard {
     }
 }
 
+/// Visible result row: app or a special action (calc / web / URL / extra).
+#[derive(Clone)]
+enum ResultItem {
+    App(desktop::AppEntry),
+    Calc { display: String, result: String },
+    Web { title: String, url: String },
+    Extra { label: String, exec: String },
+}
+
 struct UiState {
-    results: RefCell<Vec<desktop::AppEntry>>,
+    results: RefCell<Vec<ResultItem>>,
     refresh_id: Cell<Option<glib::SourceId>>,
     ignore_changed: Cell<bool>,
+    recents: RefCell<recents::Recents>,
+    extras: Vec<extras::ExtraCommand>,
 }
 
 fn apply_css() {
@@ -107,6 +126,76 @@ fn focus_entry(entry: &Entry) {
     entry.set_position(len);
 }
 
+fn copy_to_clipboard(text: &str) {
+    if let Some(display) = Display::default() {
+        display.clipboard().set_text(text);
+    }
+}
+
+/// Pop-style web prefixes and bare URLs. Returns (title, url) if matched.
+fn parse_web_action(query: &str) -> Option<(String, String)> {
+    let q = query.trim();
+    if q.is_empty() {
+        return None;
+    }
+    let lower = q.to_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        return Some((format!("Open {q}"), q.to_string()));
+    }
+    let (prefix, engine, base) = if lower.starts_with("ddg ") {
+        ("ddg ", "DuckDuckGo", "https://duckduckgo.com/?q=")
+    } else if lower.starts_with("google ") {
+        ("google ", "Google", "https://www.google.com/search?q=")
+    } else if lower.starts_with("gs ") {
+        ("gs ", "Google", "https://www.google.com/search?q=")
+    } else if lower.starts_with("? ") || (lower.starts_with('?') && lower.len() > 1) {
+        let rest = if lower.starts_with("? ") {
+            &q[2..]
+        } else {
+            &q[1..]
+        };
+        let rest = rest.trim();
+        if rest.is_empty() {
+            return None;
+        }
+        let url = format!(
+            "https://duckduckgo.com/?q={}",
+            urlencoding::encode(rest)
+        );
+        return Some((format!("Search DuckDuckGo: {rest}"), url));
+    } else {
+        return None;
+    };
+    let rest = q[prefix.len()..].trim();
+    if rest.is_empty() {
+        return None;
+    }
+    let url = format!("{base}{}", urlencoding::encode(rest));
+    Some((format!("Search {engine}: {rest}"), url))
+}
+
+fn parse_calc(query: &str) -> Option<(String, String)> {
+    let q = query.trim();
+    if !q.starts_with('=') {
+        return None;
+    }
+    let expr = q[1..].trim();
+    if expr.is_empty() {
+        return None;
+    }
+    match meval::eval_str(expr) {
+        Ok(v) => {
+            let result = if (v - v.round()).abs() < 1e-10 && v.abs() < 1e15 {
+                format!("{}", v.round() as i64)
+            } else {
+                format!("{v}")
+            };
+            Some((format!("= {result}"), result))
+        }
+        Err(_) => None,
+    }
+}
+
 fn rebuild_list(
     list: &ListBox,
     apps: &[desktop::AppEntry],
@@ -117,10 +206,29 @@ fn rebuild_list(
         list.remove(&row);
     }
 
-    let scored = fuzzy::rank(query, apps);
-    let top: Vec<desktop::AppEntry> = scored.into_iter().take(50).map(|(_, a)| a).collect();
+    let mut items: Vec<ResultItem> = Vec::new();
 
-    for a in &top {
+    if let Some((display, result)) = parse_calc(query) {
+        items.push(ResultItem::Calc { display, result });
+    } else if let Some((title, url)) = parse_web_action(query) {
+        items.push(ResultItem::Web { title, url });
+    } else {
+        for ex in &state.extras {
+            if extras::matches(query, &ex.prefix) {
+                items.push(ResultItem::Extra {
+                    label: ex.label.clone(),
+                    exec: ex.exec.clone(),
+                });
+            }
+        }
+        let recents = state.recents.borrow();
+        let scored = fuzzy::rank(query, apps, &recents);
+        for (_, a) in scored.into_iter().take(50) {
+            items.push(ResultItem::App(a));
+        }
+    }
+
+    for (i, item) in items.iter().enumerate() {
         let row = ListBoxRow::new();
         row.set_can_focus(false);
         row.set_focusable(false);
@@ -131,37 +239,79 @@ fn rebuild_list(
         box_.set_margin_top(6);
         box_.set_margin_bottom(6);
 
-        let icon = if a.icon.starts_with('/') {
-            let path = std::path::Path::new(&a.icon);
-            if path.is_file() {
-                Image::from_file(path)
-            } else {
-                Image::from_icon_name("application-x-executable")
-            }
-        } else {
-            Image::from_icon_name(&a.icon)
-        };
-        icon.set_pixel_size(28);
-        box_.append(&icon);
-
-        let col = GtkBox::new(Orientation::Vertical, 0);
-        let name = Label::new(Some(&a.name));
-        name.set_xalign(0.0);
-        name.add_css_class("title");
-        col.append(&name);
-        if !a.comment.is_empty() {
-            let c = Label::new(Some(&a.comment));
-            c.set_xalign(0.0);
-            c.add_css_class("dim-label");
-            c.set_ellipsize(pango::EllipsizeMode::End);
-            col.append(&c);
+        if i < 9 {
+            let badge = Label::new(Some(&format!("{}", i + 1)));
+            badge.add_css_class("hotkey-badge");
+            badge.set_width_chars(2);
+            badge.set_xalign(0.5);
+            box_.append(&badge);
         }
-        box_.append(&col);
+
+        match item {
+            ResultItem::App(a) => {
+                let icon = if a.icon.starts_with('/') {
+                    let path = std::path::Path::new(&a.icon);
+                    if path.is_file() {
+                        Image::from_file(path)
+                    } else {
+                        Image::from_icon_name("application-x-executable")
+                    }
+                } else {
+                    Image::from_icon_name(&a.icon)
+                };
+                icon.set_pixel_size(28);
+                box_.append(&icon);
+
+                let col = GtkBox::new(Orientation::Vertical, 0);
+                let name = Label::new(Some(&a.name));
+                name.set_xalign(0.0);
+                name.add_css_class("title");
+                col.append(&name);
+                if !a.comment.is_empty() {
+                    let c = Label::new(Some(&a.comment));
+                    c.set_xalign(0.0);
+                    c.add_css_class("dim-label");
+                    c.set_ellipsize(pango::EllipsizeMode::End);
+                    col.append(&c);
+                }
+                box_.append(&col);
+            }
+            ResultItem::Calc { display, .. } => {
+                let icon = Image::from_icon_name("accessories-calculator");
+                icon.set_pixel_size(28);
+                box_.append(&icon);
+                let name = Label::new(Some(display));
+                name.set_xalign(0.0);
+                name.add_css_class("title");
+                box_.append(&name);
+            }
+            ResultItem::Web { title, .. } => {
+                let icon = Image::from_icon_name("web-browser");
+                icon.set_pixel_size(28);
+                box_.append(&icon);
+                let name = Label::new(Some(title));
+                name.set_xalign(0.0);
+                name.add_css_class("title");
+                name.set_ellipsize(pango::EllipsizeMode::End);
+                box_.append(&name);
+            }
+            ResultItem::Extra { label, .. } => {
+                let icon = Image::from_icon_name("system-run");
+                icon.set_pixel_size(28);
+                box_.append(&icon);
+                let name = Label::new(Some(label));
+                name.set_xalign(0.0);
+                name.add_css_class("title");
+                name.set_ellipsize(pango::EllipsizeMode::End);
+                box_.append(&name);
+            }
+        }
+
         row.set_child(Some(&box_));
         list.append(&row);
     }
 
-    *state.results.borrow_mut() = top;
+    *state.results.borrow_mut() = items;
     if !state.results.borrow().is_empty() {
         if let Some(r) = list.row_at_index(0) {
             list.select_row(Some(&r));
@@ -184,12 +334,61 @@ fn move_sel(list: &ListBox, state: &UiState, entry: &Entry, delta: i32) -> bool 
     true
 }
 
+fn activate_index(list: &ListBox, state: &UiState, app: &Application, idx: usize) {
+    let item = {
+        let results = state.results.borrow();
+        if idx >= results.len() {
+            return;
+        }
+        results[idx].clone()
+    };
+    match item {
+        ResultItem::App(a) => {
+            state.recents.borrow_mut().record(&a.desktop_id);
+            let _ = launch::launch_app(&a);
+            app.quit();
+        }
+        ResultItem::Calc { result, .. } => {
+            copy_to_clipboard(&result);
+            app.quit();
+        }
+        ResultItem::Web { url, .. } => {
+            let _ = launch::open_uri(&url);
+            app.quit();
+        }
+        ResultItem::Extra { exec, .. } => {
+            let _ = launch::run_shell(&exec);
+            app.quit();
+        }
+    }
+    let _ = list;
+}
+
 fn launch_selected(list: &ListBox, state: &UiState, app: &Application) {
     let idx = list.selected_row().map(|r| r.index()).unwrap_or(0) as usize;
-    let results = state.results.borrow();
-    if idx < results.len() {
-        let _ = launch::launch_app(&results[idx]);
-        app.quit();
+    activate_index(list, state, app, idx);
+}
+
+fn alt_digit_index(keyval: Key, modifiers: ModifierType) -> Option<usize> {
+    if !modifiers.contains(ModifierType::ALT_MASK) {
+        return None;
+    }
+    if modifiers.contains(ModifierType::CONTROL_MASK)
+        || modifiers.contains(ModifierType::SUPER_MASK)
+    {
+        return None;
+    }
+    match keyval {
+        Key::_1 | Key::KP_1 => Some(0),
+        Key::_2 | Key::KP_2 => Some(1),
+        Key::_3 | Key::KP_3 => Some(2),
+        Key::_4 | Key::KP_4 => Some(3),
+        Key::_5 | Key::KP_5 => Some(4),
+        Key::_6 | Key::KP_6 => Some(5),
+        Key::_7 | Key::KP_7 => Some(6),
+        Key::_8 | Key::KP_8 => Some(7),
+        Key::_9 | Key::KP_9 => Some(8),
+        _ => None,
     }
 }
 
@@ -208,6 +407,8 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
         results: RefCell::new(Vec::new()),
         refresh_id: Cell::new(None),
         ignore_changed: Cell::new(false),
+        recents: RefCell::new(recents::Recents::load()),
+        extras: extras::load(),
     });
 
     let outer = GtkBox::new(Orientation::Vertical, 0);
@@ -236,21 +437,26 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
     list.set_activate_on_single_click(true);
     scrolled.set_child(Some(&list));
 
-    let hint = Label::new(Some("Type full words · ↑↓ select · Enter launch · Esc close"));
+    let hint = Label::new(Some(
+        "= calc · ?/ddg/gs search · Alt+1-9 · ↑↓ · Enter · Esc",
+    ));
     hint.add_css_class("dim-label");
     hint.set_margin_top(6);
     hint.set_margin_bottom(8);
     outer.append(&hint);
 
-    // Key controller on entry (CAPTURE)
     {
         let app_c = app.clone();
         let list_c = list.clone();
         let state_c = state.clone();
         let entry_c = entry.clone();
-        keys.connect_key_pressed(move |_, keyval, _code, _state| {
+        keys.connect_key_pressed(move |_, keyval, _code, modifiers| {
             if keyval == Key::Escape {
                 app_c.quit();
+                return glib::Propagation::Stop;
+            }
+            if let Some(n) = alt_digit_index(keyval, modifiers) {
+                activate_index(&list_c, &state_c, &app_c, n);
                 return glib::Propagation::Stop;
             }
             if keyval == Key::Down || keyval == Key::KP_Down || keyval == Key::Tab {
@@ -270,7 +476,6 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
         entry.add_controller(keys);
     }
 
-    // Activate (Enter on entry)
     {
         let app_c = app.clone();
         let list_c = list.clone();
@@ -280,7 +485,6 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
         });
     }
 
-    // Row activated
     {
         let app_c = app.clone();
         let list_c = list.clone();
@@ -290,7 +494,6 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
         });
     }
 
-    // Row selected → yank focus back
     {
         let entry_c = entry.clone();
         list.connect_row_selected(move |_, _| {
@@ -299,7 +502,6 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
         });
     }
 
-    // Focus leave on list → yank back
     {
         let focus_ctrl = EventControllerFocus::new();
         let entry_c = entry.clone();
@@ -310,7 +512,6 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
         list.add_controller(focus_ctrl);
     }
 
-    // Window is-active notify
     {
         let entry_c = entry.clone();
         window.connect_is_active_notify(move |win| {
@@ -321,7 +522,6 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
         });
     }
 
-    // Debounced changed
     {
         let entry_c = entry.clone();
         let list_c = list.clone();
@@ -375,7 +575,6 @@ fn main() -> glib::ExitCode {
 
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_activate(move |app| {
-        // Single window: if already open, present
         if let Some(win) = app.active_window() {
             win.present();
             return;
