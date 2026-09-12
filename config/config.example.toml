@@ -1,0 +1,27 @@
+# Floresline Launcher settings
+# Copy to: ~/.config/floresline-launcher/config.toml
+# Then re-run ./install.sh to apply hotkey / extension preferences.
+#
+# Private command shortcuts stay in extras.toml (separate file).
+
+# How many app rows to show (1–50). Alt+1–9 only reach the first nine.
+max_results = 9
+
+# Bottom hint bar in the launcher window
+hint = "?/ddg/gs search · Alt+1-9 · ↑↓ · Enter · Esc"
+
+# Primary GNOME custom shortcut applied by install.sh
+# Recommended: Super+backslash  (avoids fighting bare-Super / Activities)
+# Other examples: Super+space, Super+slash
+preferred_binding = "Super+backslash"
+
+# Also bind Super+/ as a backup? (install.sh)
+bind_super_slash = true
+
+# Bind the keyboard Search consumer key (XF86Search) to the launcher? (install.sh)
+bind_xf86_search = true
+
+# Pop-style: Super alone opens the launcher (GJS extension).
+# Default false — bare Super stays GNOME Activities only (less annoying on stock GNOME).
+# Set true, run ./install.sh, then log out/in once on Wayland.
+enable_super_alone_extension = false

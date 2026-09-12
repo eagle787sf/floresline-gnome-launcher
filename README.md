@@ -1,6 +1,6 @@
 # Floresline GNOME Launcher
 
-Pop!_OS-style **fuzzy app launcher** for modern GNOME (45–50), plus an optional Shell extension that opens it with the **Super** key.
+Pop!_OS-style **fuzzy app launcher** for modern GNOME (45–50). Default hotkey is **Super+\** (configurable). Optional Shell extension for bare **Super** if you want Pop muscle memory.
 
 Inspired by [Pop Launcher Super-Key](https://extensions.gnome.org/extension/4797/pop-launcher-super-key/) — that extension targets older GNOME and Pop’s launcher. This project is a maintained alternative for **Ubuntu / stock GNOME Wayland**.
 
@@ -16,8 +16,8 @@ Inspired by [Pop Launcher Super-Key](https://extensions.gnome.org/extension/4797
 - **Alt+1…9** launch the nth visible result (number badges on the first 9 rows)
 - **Search field keeps focus** while you type multi-letter queries
 - **Keyboard nav**: `↑` `↓` select · `Enter` launch · `Esc` close
-- **Pop-like shortcuts**: `Super+Space`, `Super+/`
-- **Optional Super-key extension** (GJS): Super alone opens the launcher (`Super+A` still opens the app grid). **Log out and back in** once after install (Wayland)
+- **Configurable shortcuts** via `~/.config/floresline-launcher/config.toml` (defaults to `Super+\`)
+- **Optional Super-alone extension** (GJS): off by default so bare Super stays GNOME Activities; opt in via config
 - **No root** required for install
 - GTK4 · Wayland-friendly
 - Optional extras: `~/.config/floresline-launcher/extras.toml`
@@ -41,7 +41,9 @@ cd floresline-gnome-launcher
 
 `install.sh` installs the **Rust release binary** when it has been built (`rust/floresline-launcher/target/release/floresline-launcher`) and keeps Python as `floresline-launcher-python`. See [docs/RUST.md](docs/RUST.md) for deps and `cargo build --release`.
 
-Then **log out and back in** (needed for the Super-key extension on Wayland).
+Edit `~/.config/floresline-launcher/config.toml` anytime (install seeds it from `config/config.example.toml`). Re-run `./install.sh` after changing shortcut options.
+
+Only if you enable `enable_super_alone_extension`: **log out and back in** once on Wayland.
 
 ### Try without Super
 
@@ -55,9 +57,9 @@ floresline-launcher-toggle
 
 | Shortcut | Action |
 |----------|--------|
-| `Super` | Launcher *(after logout/in with the GJS extension)* |
-| `Super` + `Space` | Launcher |
-| `Super` + `/` | Launcher |
+| `Super` + `\` | Launcher *(default; set in config.toml)* |
+| `Super` + `/` | Launcher *(optional backup)* |
+| `Super` alone | GNOME Activities *(or launcher if you enable the GJS extension in config)* |
 | `Super` + `A` | GNOME app grid |
 | `↑` `↓` | Move selection |
 | `Enter` | Launch / open search |
@@ -90,7 +92,7 @@ Log out/in to unload the extension.
 ```
 bin/                      # Python launcher fallback + toggle scripts
 extension/                # GNOME Shell Super-key extension (ESM / GJS, 45+)
-rust/floresline-launcher/ # Rust + GTK4 launcher (v0.2.6)
+rust/floresline-launcher/ # Rust + GTK4 launcher (v0.2.7)
 packaging/                # Prebuilt .shell-extension.zip
 install.sh / uninstall.sh
 docs/                     # Extra notes (incl. RUST.md)
@@ -98,7 +100,7 @@ docs/                     # Extra notes (incl. RUST.md)
 
 ## Rust port
 
-A native **Rust + GTK4** rewrite lives under `rust/floresline-launcher/` (v0.2.6). `install.sh` prefers the release binary when present and keeps Python as `floresline-launcher-python`. See [docs/RUST.md](docs/RUST.md) for deps and `cargo build --release`.
+A native **Rust + GTK4** rewrite lives under `rust/floresline-launcher/` (v0.2.7). `install.sh` prefers the release binary when present and keeps Python as `floresline-launcher-python`. See [docs/RUST.md](docs/RUST.md) for deps and `cargo build --release`.
 
 ## Manual extension zip
 
@@ -111,7 +113,8 @@ gnome-extensions install -f packaging/floresline-super-launcher@floresline.shell
 
 | Symptom | Fix |
 |---------|-----|
-| Super still opens Activities | Log out/in; confirm extension enabled in *Extensions* |
+| Want bare Super for Activities only | Keep `enable_super_alone_extension = false` (default) |
+| Want Pop-style Super alone | Set `enable_super_alone_extension = true`, re-run `./install.sh`, log out/in |
 | Can’t type more than one letter | Update to latest launcher (focus fix) |
 | `Super+Space` switches keyboard layout | Install script remaps input-source off Super+Space |
 | Extension “doesn’t exist” in CLI until reboot | Normal on Wayland until new session |

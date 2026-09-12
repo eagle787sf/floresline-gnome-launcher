@@ -1,5 +1,6 @@
 //! Floresline GNOME launcher — Rust + GTK4 (Pop-style prefixes + recents).
 
+mod config;
 mod desktop;
 mod extras;
 mod fuzzy;
@@ -103,6 +104,7 @@ struct UiState {
     ignore_changed: Cell<bool>,
     recents: RefCell<recents::Recents>,
     extras: Vec<extras::ExtraCommand>,
+    config: config::Config,
 }
 
 fn apply_css() {
@@ -205,7 +207,7 @@ fn rebuild_list(
         }
         let recents = state.recents.borrow();
         let scored = fuzzy::rank(query, apps, &recents);
-        for (_, a) in scored.into_iter().take(9) {
+        for (_, a) in scored.into_iter().take(state.config.max_results) {
             items.push(ResultItem::App(a));
         }
     }
@@ -391,12 +393,14 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
         .modal(true)
         .build();
 
+    let cfg = config::load();
     let state = Rc::new(UiState {
         results: RefCell::new(Vec::new()),
         refresh_id: Cell::new(None),
         ignore_changed: Cell::new(false),
         recents: RefCell::new(recents::Recents::load()),
         extras: extras::load(),
+        config: cfg.clone(),
     });
 
     let outer = GtkBox::new(Orientation::Vertical, 0);
@@ -425,9 +429,7 @@ fn build_ui(app: &Application, apps: Rc<Vec<desktop::AppEntry>>) {
     list.set_activate_on_single_click(true);
     scrolled.set_child(Some(&list));
 
-    let hint = Label::new(Some(
-        "?/ddg/gs search · Alt+1-9 · ↑↓ · Enter · Esc",
-    ));
+    let hint = Label::new(Some(cfg.hint.as_str()));
     hint.add_css_class("dim-label");
     hint.set_margin_top(6);
     hint.set_margin_bottom(8);
