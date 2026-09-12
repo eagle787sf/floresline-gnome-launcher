@@ -41,3 +41,9 @@ If bare Super still opens Overview, run `./install.sh` again or:
 ```bash
 gsettings set org.gnome.mutter overlay-key ''
 ```
+
+## GNOME custom shortcut paths
+
+`install.sh` registers shortcuts under `custom2` / `custom3` / `custom8`.
+GNOME ignores oddly named keybind paths (e.g. `.../floresline-launcher/`), which
+looks like “nothing launches” even though the binary is fine.

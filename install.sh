@@ -18,7 +18,7 @@ if [[ ! -f "$CFG_DIR/config.toml" ]]; then
   fi
 fi
 
-RUST_BIN="$ROOT/rust/floresline-launcher/target/release/floresline-launcher"
+RUST_BIN="$ROOT/rust/custom2/target/release/floresline-launcher"
 if [[ -x "$RUST_BIN" ]]; then
   install -m 755 "$RUST_BIN" "$BIN_DIR/floresline-launcher"
   install -m 755 "$ROOT/bin/floresline-launcher" "$BIN_DIR/floresline-launcher-python"
@@ -51,7 +51,7 @@ import ast, os, re, subprocess
 from pathlib import Path
 
 home = Path.home()
-cfg_path = home / ".config/floresline-launcher/config.toml"
+cfg_path = home / ".config/custom2/config.toml"
 text = cfg_path.read_text() if cfg_path.is_file() else ""
 
 def get_bool(key, default):
@@ -129,14 +129,15 @@ def clear_binding(path):
             pass
 
 # Stable floresline paths (and legacy custom2/custom3 if present — we use named paths)
+# GNOME only reliably fires customN/ paths (not arbitrary names).
 ensure(
-    "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/floresline-launcher/",
+    "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom2/",
     "Floresline Launcher",
     toggle,
     primary,
 )
 
-slash_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/floresline-launcher-slash/"
+slash_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom3/"
 if bind_slash:
     ensure(slash_path, "Floresline Launcher (slash)", toggle, "<Super>slash")
 else:
@@ -145,7 +146,7 @@ else:
         base = f"{schema}.custom-keybinding:{slash_path}"
         subprocess.check_call(["gsettings", "set", base, "binding", ""])
 
-search_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/floresline-launcher-search/"
+search_path = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom8/"
 if bind_search:
     ensure(search_path, "Floresline Launcher (Search key)", toggle, "XF86Search")
 
@@ -203,7 +204,7 @@ update-desktop-database "$APP_DIR" 2>/dev/null || true
 python3 - <<'PY'
 from pathlib import Path
 import re
-p = Path.home()/".config/floresline-launcher/config.toml"
+p = Path.home()/".config/custom2/config.toml"
 t = p.read_text() if p.is_file() else ""
 def gs(k,d):
     m=re.search(rf'(?m)^\s*{k}\s*=\s*"([^"]*)"\s*$',t); return m.group(1) if m else d
@@ -216,7 +217,7 @@ print(f"""
 Installed:
   ~/.local/bin/floresline-launcher
   ~/.local/bin/floresline-launcher-toggle
-  ~/.config/floresline-launcher/config.toml   ← edit this, then re-run ./install.sh
+  ~/.config/custom2/config.toml   ← edit this, then re-run ./install.sh
 
 Shortcuts (from your config):
   {bind}     → launcher (primary)
