@@ -59,7 +59,7 @@ floresline-launcher-toggle
 |----------|--------|
 | `Super` + `\` | Launcher *(default; set in config.toml)* |
 | `Super` + `/` | Launcher *(optional backup)* |
-| `Super` alone | GNOME Activities *(or launcher if you enable the GJS extension in config)* |
+| `Super` alone | Does nothing by default *(Activities was racing Super+\\; use Super+Shift+Space)* |
 | `Super` + `A` | GNOME app grid |
 | `↑` `↓` | Move selection |
 | `Enter` | Launch / open search |
@@ -92,7 +92,7 @@ Log out/in to unload the extension.
 ```
 bin/                      # Python launcher fallback + toggle scripts
 extension/                # GNOME Shell Super-key extension (ESM / GJS, 45+)
-rust/floresline-launcher/ # Rust + GTK4 launcher (v0.2.7)
+rust/floresline-launcher/ # Rust + GTK4 launcher (v0.2.8)
 packaging/                # Prebuilt .shell-extension.zip
 install.sh / uninstall.sh
 docs/                     # Extra notes (incl. RUST.md)
@@ -100,7 +100,7 @@ docs/                     # Extra notes (incl. RUST.md)
 
 ## Rust port
 
-A native **Rust + GTK4** rewrite lives under `rust/floresline-launcher/` (v0.2.7). `install.sh` prefers the release binary when present and keeps Python as `floresline-launcher-python`. See [docs/RUST.md](docs/RUST.md) for deps and `cargo build --release`.
+A native **Rust + GTK4** rewrite lives under `rust/floresline-launcher/` (v0.2.8). `install.sh` prefers the release binary when present and keeps Python as `floresline-launcher-python`. See [docs/RUST.md](docs/RUST.md) for deps and `cargo build --release`.
 
 ## Manual extension zip
 
@@ -113,7 +113,8 @@ gnome-extensions install -f packaging/floresline-super-launcher@floresline.shell
 
 | Symptom | Fix |
 |---------|-----|
-| Want bare Super for Activities only | Keep `enable_super_alone_extension = false` (default) |
+| Typing goes to GNOME search instead of Floresline | Keep `disable_bare_super_overview = true`, re-run `./install.sh` |
+| Want bare Super for Activities only | Set `disable_bare_super_overview = false` *(will race Super+\\)* |
 | Want Pop-style Super alone | Set `enable_super_alone_extension = true`, re-run `./install.sh`, log out/in |
 | Can’t type more than one letter | Update to latest launcher (focus fix) |
 | `Super+Space` switches keyboard layout | Install script remaps input-source off Super+Space |

@@ -15,6 +15,7 @@ pub struct Config {
     pub enable_super_alone_extension: bool,
     pub bind_super_slash: bool,
     pub bind_xf86_search: bool,
+    pub disable_bare_super_overview: bool,
 }
 
 impl Default for Config {
@@ -26,6 +27,7 @@ impl Default for Config {
             enable_super_alone_extension: false,
             bind_super_slash: true,
             bind_xf86_search: true,
+            disable_bare_super_overview: true,
         }
     }
 }
@@ -44,6 +46,8 @@ struct File {
     bind_super_slash: Option<bool>,
     #[serde(default)]
     bind_xf86_search: Option<bool>,
+    #[serde(default)]
+    disable_bare_super_overview: Option<bool>,
 }
 
 fn config_path() -> PathBuf {
@@ -94,6 +98,9 @@ pub fn load() -> Config {
     }
     if let Some(v) = file.bind_xf86_search {
         cfg.bind_xf86_search = v;
+    }
+    if let Some(v) = file.disable_bare_super_overview {
+        cfg.disable_bare_super_overview = v;
     }
     cfg
 }

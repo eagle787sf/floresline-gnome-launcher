@@ -68,6 +68,7 @@ preferred = get_str("preferred_binding", "Super+backslash")
 bind_slash = get_bool("bind_super_slash", True)
 bind_search = get_bool("bind_xf86_search", True)
 super_alone = get_bool("enable_super_alone_extension", False)
+disable_overview = get_bool("disable_bare_super_overview", True)
 
 # Human "Super+backslash" → gsettings "<Super>backslash"
 def to_gsettings(binding: str) -> str:
@@ -162,11 +163,16 @@ if legacy_space in bindings and primary != "<Super>space":
 fmt = "[" + ", ".join(f"'{b}'" for b in bindings) + "]"
 subprocess.check_call(["gsettings", "set", schema, "custom-keybindings", fmt])
 
-# Keep Activities on bare Super
+# Bare Super vs Activities: default OFF so Super+chord launchers win focus
 try:
-    subprocess.check_call(["gsettings", "set", "org.gnome.mutter", "overlay-key", "Super"])
-except Exception:
-    pass
+    if disable_overview:
+        subprocess.check_call(["gsettings", "set", "org.gnome.mutter", "overlay-key", ""])
+        print("Bare Super overview: disabled (use Super+Shift+Space for Activities)")
+    else:
+        subprocess.check_call(["gsettings", "set", "org.gnome.mutter", "overlay-key", "Super"])
+        print("Bare Super overview: enabled (may race with Super+\\\\ )")
+except Exception as e:
+    print(f"overlay-key warning: {e}")
 
 # Extension enable/disable from config
 uuid = "floresline-super-launcher@floresline"
@@ -215,7 +221,7 @@ Installed:
 Shortcuts (from your config):
   {bind}     → launcher (primary)
   Super+/    → launcher {'(on)' if slash else '(off)'}
-  Super alone → {'launcher (extension; log out/in)' if alone else 'GNOME Activities only'}
+  Super alone → {'launcher (extension; log out/in)' if alone else ('disabled (no Activities race)' if gb('disable_bare_super_overview', True) else 'GNOME Activities')}
 
 Test:  floresline-launcher-toggle
 """)

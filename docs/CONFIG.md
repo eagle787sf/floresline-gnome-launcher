@@ -30,3 +30,14 @@ Set `enable_super_alone_extension = true` only if you want Pop-style Super alone
 - `hint` — bottom hint text
 
 Restart the launcher (or toggle it) after editing those. Shortcut / extension flags need `./install.sh` again.
+
+## Super+\\ without Activities stealing focus
+
+Set `disable_bare_super_overview = true` (default). `install.sh` clears `org.gnome.mutter overlay-key` so tapping Super no longer opens Activities / GNOME search.
+
+Open Activities with **Super+Shift+Space** (or **Super+\\`** / Above_Tab) instead.
+
+If bare Super still opens Overview, run `./install.sh` again or:
+```bash
+gsettings set org.gnome.mutter overlay-key ''
+```

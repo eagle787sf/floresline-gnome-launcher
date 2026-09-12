@@ -25,3 +25,8 @@ bind_xf86_search = true
 # Default false — bare Super stays GNOME Activities only (less annoying on stock GNOME).
 # Set true, run ./install.sh, then log out/in once on Wayland.
 enable_super_alone_extension = false
+
+# When true, install.sh clears mutter overlay-key so bare Super does NOT open
+# Activities. That stops the race where Super+\ opens GNOME search first and
+# steals typing from Floresline. Overview stays on Super+Shift+Space / Super+\` .
+disable_bare_super_overview = true

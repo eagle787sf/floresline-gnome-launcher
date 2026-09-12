@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
-# Toggle Floresline launcher (for Super / Super+Space bindings)
+# Toggle Floresline launcher (for Super+\ / Super+/ / Search key bindings)
 set -euo pipefail
 export DISPLAY="${DISPLAY:-:0}"
 export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}"
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BIN="${FLORESLINE_LAUNCHER:-$ROOT/floresline-launcher}"
-# Prefer installed copy if present
-if [[ -x "$HOME/.local/bin/floresline-launcher" ]]; then
-  BIN="$HOME/.local/bin/floresline-launcher"
-fi
+BIN="${FLORESLINE_LAUNCHER:-$HOME/.local/bin/floresline-launcher}"
 LOCK="${XDG_RUNTIME_DIR}/floresline-launcher.pid"
+
+# Best-effort: close GNOME overview so it does not steal keystrokes
+hide_overview() {
+  gdbus call --session \
+    --dest org.gnome.Shell \
+    --object-path /org/gnome/Shell \
+    --method org.gnome.Shell.Eval \
+    'try { Main.overview.hide(); } catch (e) {}' \
+    >/dev/null 2>&1 || true
+}
 
 if [[ -f "$LOCK" ]]; then
   old=$(cat "$LOCK" 2>/dev/null || true)
@@ -24,6 +29,7 @@ if [[ -f "$LOCK" ]]; then
   rm -f "$LOCK"
 fi
 
+hide_overview
 "$BIN" &
 echo $! > "$LOCK"
 (
